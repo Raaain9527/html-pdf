@@ -487,9 +487,29 @@ if (isElectron) {
     }
   });
 
-  // Allow OS drag-drop of file paths (handled by Electron, but also support browser-style drop)
-  document.addEventListener('dragover', e => { e.preventDefault(); });
-  document.addEventListener('drop', e => { e.preventDefault(); });
+  // Click drop zone to open native dialog
+  dropZone.addEventListener('click', () => window.electronAPI.openFile());
+
+  // Drag-and-drop for Electron
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      if (file.path) {
+        // Electron adds .path to File objects
+        selectedFile = file.path;
+        const name = file.path.split(/[\\/]/).pop();
+        fileSelected.style.display = 'flex';
+        fileSelected.innerHTML = `<span style="color:var(--accent);font-weight:600;">📄</span> ${name}`;
+      } else {
+        handleFile(file);
+      }
+      updateExportState();
+    }
+  });
 } else {
   // Browser: drag-drop
   dropZone.addEventListener('click', () => fileInput.click());

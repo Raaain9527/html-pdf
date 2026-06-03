@@ -52,31 +52,36 @@ async function handleOpenFile() {
 }
 
 async function handleExportFile(event, inputPath, options) {
+  console.log('[export-file] input:', inputPath);
+  console.log('[export-file] options:', JSON.stringify(options, null, 2));
   try {
     const result2 = await dialog.showSaveDialog(mainWindow, {
       title: '保存 PDF',
       defaultPath: path.basename(inputPath).replace(/\.html?$/i, '') + '.pdf',
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
     });
-    if (result2.canceled) return { cancel: true };
+    if (result2.canceled) { console.log('[export-file] cancelled'); return { cancel: true }; }
 
-    // Determine input: file path or URL
     let input = inputPath;
     if (!/^https?:\/\//i.test(input) && !fs.existsSync(input)) {
-      return { ok: false, error: '文件不存在' };
+      return { ok: false, error: `文件不存在: ${input}` };
     }
 
+    console.log('[export-file] exporting to:', result2.filePath);
     const result3 = await exportPage(null, input, result2.filePath, options);
+    console.log('[export-file] result:', result3.ok ? 'ok' : result3.error);
     if (result3.ok) {
       shell.showItemInFolder(result2.filePath);
     }
     return result3;
   } catch (err) {
+    console.error('[export-file] error:', err);
     return { ok: false, error: err.message };
   }
 }
 
 async function handleExportUrl(event, url, options) {
+  console.log('[export-url] url:', url);
   try {
     const urlObj = new URL(url);
     const result2 = await dialog.showSaveDialog(mainWindow, {
@@ -84,14 +89,17 @@ async function handleExportUrl(event, url, options) {
       defaultPath: urlObj.hostname + '.pdf',
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
     });
-    if (result2.canceled) return { cancel: true };
+    if (result2.canceled) { console.log('[export-url] cancelled'); return { cancel: true }; }
 
+    console.log('[export-url] exporting to:', result2.filePath);
     const result3 = await exportPage(null, url, result2.filePath, options);
+    console.log('[export-url] result:', result3.ok ? 'ok' : result3.error);
     if (result3.ok) {
       shell.showItemInFolder(result2.filePath);
     }
     return result3;
   } catch (err) {
+    console.error('[export-url] error:', err);
     return { ok: false, error: err.message };
   }
 }

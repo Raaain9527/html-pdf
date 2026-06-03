@@ -83,7 +83,9 @@ async function exportPage(browser, input, output, options = {}) {
       if (!fs.existsSync(filePath)) {
         return { ok: false, error: `文件不存在: ${filePath}` };
       }
-      await page.goto(`file://${filePath}`, { waitUntil: 'networkidle0', timeout: 30000 });
+      // Convert Windows backslashes to forward slashes for file:// URL
+      const fileUrl = 'file:///' + filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+      await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     }
 
     const pageMetrics = await page.evaluate(() => {
