@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTML → PDF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --border-hover: #cbd5e1;
+  --text: #0f172a;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-subtle: #eff6ff;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.08);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+}
+.app {
+  width: 100%;
+  max-width: 680px;
+  padding: 48px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.logo {
+  width: 36px; height: 36px;
+  background: var(--accent);
+  border-radius: var(--radius);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.subtitle { font-size: 13px; color: var(--text-secondary); margin-top: -2px; }
+
+/* Card */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.card-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+}
+
+/* Tabs */
+.tabs { display: flex; gap: 0; margin-bottom: 20px; background: #f1f5f9; border-radius: var(--radius); padding: 3px; }
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 150ms ease;
+  border: none;
+  background: none;
+  font-family: var(--font);
+}
+.tab.active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Drop Zone */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 200ms ease;
+  position: relative;
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+.drop-zone.drag-over { box-shadow: var(--shadow-lg); transform: scale(1.01); }
+.drop-icon {
+  width: 48px; height: 48px;
+  margin: 0 auto 12px;
+  background: var(--accent-subtle);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+}
+.drop-label { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.drop-hint { font-size: 12px; color: var(--text-muted); }
+.file-selected {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  background: var(--accent-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: var(--mono);
+  word-break: break-all;
+  margin-top: 12px;
+}
+
+/* URL Input */
+.url-row { display: flex; gap: 8px; }
+.url-input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: var(--mono);
+  color: var(--text);
+  background: #f8fafc;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.url-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.url-input::placeholder { font-family: var(--font); color: var(--text-muted); font-size: 13px; }
+
+/* Button */
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+  font-family: var(--font);
+  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(37,99,235,0.2);
+}
+.btn-primary:hover { background: var(--accent-hover); box-shadow: 0 2px 8px rgba(37,99,235,0.3); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.btn-secondary {
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: #f8fafc; border-color: var(--border-hover); }
+.btn-lg { padding: 14px 28px; font-size: 15px; border-radius: var(--radius); }
+
+/* Settings */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.setting { display: flex; flex-direction: column; gap: 4px; }
+.setting label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.setting input, .setting select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: var(--mono);
+  color: var(--text);
+  background: #f8fafc;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.setting input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.setting-unit { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* Action Bar */
+.action-bar { display: flex; gap: 12px; align-items: center; }
+.export-hint { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+
+/* Status */
+.status {
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  display: none;
+  animation: fadeIn 200ms ease;
+}
+.status.show { display: block; }
+.status.loading { background: #eff6ff; color: #1e40af; }
+.status.success { background: #f0fdf4; color: #166534; }
+.status.error { background: #fef2f2; color: #991b1b; }
+
+/* Footer */
+.footer { text-align: center; font-size: 12px; color: var(--text-muted); padding-top: 8px; }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 600ms linear infinite;
+}
+
+@media (max-width: 600px) {
+  .app { padding: 24px 16px 48px; gap: 16px; }
+  .card { padding: 18px; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .action-bar { flex-direction: column; }
+  .export-hint { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="header">
+    <div class="logo">&lt;/&gt;</div>
+    <div>
+      <div class="title">HTML → PDF</div>
+      <div class="subtitle">长页面单页导出 · 矢量文字可选中</div>
+    </div>
+  </div>
+
+  <!-- Input Card -->
+  <div class="card">
+    <div class="card-header">输入</div>
+    <div class="tabs">
+      <button class="tab active" data-tab="file">📄 HTML 文件</button>
+      <button class="tab" data-tab="url">🔗 网页 URL</button>
+    </div>
+
+    <!-- File Tab -->
+    <div id="tab-file">
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">↑</div>
+        <div class="drop-label">拖拽 HTML 文件到此处</div>
+        <div class="drop-hint">或点击选择文件 · .html, .htm</div>
+        <input type="file" id="fileInput" accept=".html,.htm" hidden>
+      </div>
+      <div class="file-selected" id="fileSelected" style="display:none"></div>
+    </div>
+
+    <!-- URL Tab -->
+    <div id="tab-url" style="display:none">
+      <div class="url-row">
+        <input class="url-input" id="urlInput" placeholder="https://example.com" autocomplete="off">
+        <button class="btn btn-secondary" id="urlFetch">加载</button>
+      </div>
+      <div id="urlStatus" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <!-- Settings Card -->
+  <div class="card">
+    <div class="card-header">导出设置</div>
+    <div class="settings-grid">
+      <div class="setting">
+        <label>视口宽度</label>
+        <input type="number" id="viewportWidth" value="1280" min="320" max="5120" step="10">
+        <span class="setting-unit">px — 匹配 HTML 的设计宽度</span>
+      </div>
+      <div class="setting">
+        <label>缩放比例</label>
+        <input type="number" id="scale" value="1" min="0.25" max="4" step="0.05">
+        <span class="setting-unit">0.5 = 缩小一半, 2 = 放大两倍</span>
+      </div>
+      <div class="setting">
+        <label>页面宽度</label>
+        <input type="text" id="pdfWidth" placeholder="自动">
+        <span class="setting-unit">留空自动检测 · 如 210mm, 800px</span>
+      </div>
+      <div class="setting">
+        <label>页面高度</label>
+        <input type="text" id="pdfHeight" placeholder="自动（单页）">
+        <span class="setting-unit">留空 = 单页自适应</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Advanced Card -->
+  <div class="card">
+    <div class="card-header" id="advancedToggle" style="cursor:pointer;user-select:none;">
+      高级选项 <span style="font-weight:400;margin-left:4px;">▸</span>
+    </div>
+    <div id="advancedBody" style="display:none;">
+      <!-- Watermark -->
+      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.3px;">水印</div>
+      <div class="settings-grid">
+        <div class="setting">
+          <label>水印文字</label>
+          <input type="text" id="watermarkText" placeholder="留空 = 无水印">
+        </div>
+        <div class="setting">
+          <label>透明度</label>
+          <input type="number" id="watermarkOpacity" value="0.08" min="0.01" max="1" step="0.01">
+        </div>
+        <div class="setting">
+          <label>字号</label>
+          <input type="number" id="watermarkSize" value="60" min="10" max="200">
+        </div>
+        <div class="setting">
+          <label>旋转角度</label>
+          <input type="number" id="watermarkRotation" value="-30" min="-90" max="90">
+        </div>
+      </div>
+
+      <!-- Password -->
+      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.3px;">密码保护</div>
+      <div class="settings-grid">
+        <div class="setting">
+          <label>打开密码</label>
+          <input type="text" id="password" placeholder="留空 = 无密码">
+        </div>
+        <div class="setting">
+          <label>所有者密码</label>
+          <input type="text" id="ownerPassword" placeholder="默认同打开密码">
+        </div>
+      </div>
+
+      <!-- Metadata -->
+      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.3px;">PDF 元数据</div>
+      <div class="settings-grid">
+        <div class="setting">
+          <label>标题</label>
+          <input type="text" id="metaTitle" placeholder="PDF 标题">
+        </div>
+        <div class="setting">
+          <label>作者</label>
+          <input type="text" id="metaAuthor" placeholder="作者名">
+        </div>
+        <div class="setting">
+          <label>主题</label>
+          <input type="text" id="metaSubject" placeholder="主题">
+        </div>
+        <div class="setting">
+          <label>关键词</label>
+          <input type="text" id="metaKeywords" placeholder="逗号分隔">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div class="status" id="status"></div>
+
+  <!-- Action Bar -->
+  <div class="action-bar">
+    <button class="btn btn-primary btn-lg" id="exportBtn" disabled>
+      <span id="exportSpinner" style="display:none" class="spinner"></span>
+      导出 PDF
+    </button>
+    <span class="export-hint" id="exportHint"></span>
+  </div>
+
+  <div class="footer">Powered by Chromium · 输出矢量 PDF，文字可选中复制</div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+
+// Advanced toggle
+$('#advancedToggle').addEventListener('click', () => {
+  const body = $('#advancedBody');
+  const arrow = $('#advancedToggle span');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  arrow.textContent = open ? '▸' : '▾';
+});
+
+// --- Tab switching ---
+$$('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    $$('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    $('#tab-file').style.display = tab.dataset.tab === 'file' ? '' : 'none';
+    $('#tab-url').style.display = tab.dataset.tab === 'url' ? '' : 'none';
+    updateExportState();
+  });
+});
+
+// --- File handling ---
+const dropZone = $('#dropZone');
+const fileInput = $('#fileInput');
+const fileSelected = $('#fileSelected');
+let selectedFile = null;
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) handleFile(fileInput.files[0]);
+});
+
+function handleFile(file) {
+  if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
+    showStatus('请选择 .html 或 .htm 文件', 'error');
+    return;
+  }
+  selectedFile = file;
+  fileSelected.style.display = 'flex';
+  fileSelected.innerHTML = `<span style="color:var(--accent);font-weight:600;">📄</span> ${file.name} <span style="color:var(--text-muted);font-size:11px;">(${(file.size/1024).toFixed(1)} KB)</span>`;
+  updateExportState();
+}
+
+// --- URL handling ---
+$('#urlFetch').addEventListener('click', () => {
+  const url = $('#urlInput').value.trim();
+  if (!url) return;
+  try { new URL(url); } catch { showStatus('请输入有效的 URL', 'error'); return; }
+  selectedFile = url;
+  $('#urlStatus').textContent = `✓ ${url}`;
+  updateExportState();
+});
+
+// --- Export ---
+$('#exportBtn').addEventListener('click', async () => {
+  if (!selectedFile) return;
+
+  const btn = $('#exportBtn');
+  const spinner = $('#exportSpinner');
+  btn.disabled = true;
+  spinner.style.display = '';
+  showStatus('正在渲染...', 'loading');
+
+  try {
+    const formData = new FormData();
+    formData.append('viewportWidth', $('#viewportWidth').value);
+    formData.append('scale', $('#scale').value);
+    formData.append('width', $('#pdfWidth').value);
+    formData.append('height', $('#pdfHeight').value);
+    formData.append('marginTop', '0px');
+    formData.append('marginRight', '0px');
+    formData.append('marginBottom', '0px');
+    formData.append('marginLeft', '0px');
+
+    // Advanced options
+    const wt = $('#watermarkText').value.trim();
+    if (wt) {
+      formData.append('watermarkText', wt);
+      formData.append('watermarkOpacity', $('#watermarkOpacity').value);
+      formData.append('watermarkRotation', $('#watermarkRotation').value);
+      formData.append('watermarkSize', $('#watermarkSize').value);
+    }
+    const pw = $('#password').value.trim();
+    if (pw) {
+      formData.append('password', pw);
+      formData.append('ownerPassword', $('#ownerPassword').value || pw);
+    }
+    const mt = $('#metaTitle').value.trim();
+    if (mt) formData.append('metaTitle', mt);
+    const ma = $('#metaAuthor').value.trim();
+    if (ma) formData.append('metaAuthor', ma);
+    const ms = $('#metaSubject').value.trim();
+    if (ms) formData.append('metaSubject', ms);
+    const mk = $('#metaKeywords').value.trim();
+    if (mk) formData.append('metaKeywords', mk);
+
+    let endpoint, payload;
+    if (typeof selectedFile === 'string') {
+      // URL mode
+      endpoint = '/api/export/url';
+      payload = { url: selectedFile, ...Object.fromEntries(formData) };
+    } else {
+      // File mode
+      endpoint = '/api/export/file';
+      formData.append('html', selectedFile);
+      payload = formData;
+    }
+
+    const isForm = payload instanceof FormData;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      ...(isForm ? { body: payload } : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error);
+    }
+
+    // Download the PDF
+    const blob = await res.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = typeof selectedFile === 'string'
+      ? new URL(selectedFile).hostname + '.pdf'
+      : selectedFile.name.replace(/\.html?$/i, '') + '.pdf';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+
+    showStatus('导出完成 ✓', 'success');
+  } catch (err) {
+    showStatus(`导出失败: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    updateExportState();
+  }
+});
+
+function updateExportState() {
+  const hasFile = !!selectedFile;
+  $('#exportBtn').disabled = !hasFile;
+  $('#exportHint').textContent = hasFile ? '点击导出单页矢量 PDF' : '请先选择文件或输入 URL';
+}
+
+function showStatus(msg, type) {
+  const el = $('#status');
+  el.textContent = msg;
+  el.className = 'status show ' + type;
+  if (type === 'success') setTimeout(() => el.classList.remove('show'), 4000);
+}
+</script>
+</body>
+</html>

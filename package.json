@@ -1,0 +1,27 @@
+{
+  "name": "html-pdf",
+  "version": "1.0.0",
+  "description": "Export HTML to single-page vector PDF with selectable text",
+  "main": "html2pdf.js",
+  "bin": {
+    "html2pdf": "./html2pdf.js"
+  },
+  "scripts": {
+    "start": "node html2pdf.js",
+    "ui": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "commander": "^15.0.0",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-lib-plus-encrypt": "^1.1.0",
+    "puppeteer": "^25.1.0",
+    "puppeteer-core": "^25.1.0"
+  }
+}
