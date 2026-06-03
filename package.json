@@ -8,7 +8,29 @@
   },
   "scripts": {
     "start": "node html2pdf.js",
-    "ui": "node server.js"
+    "ui": "node server.js",
+    "desktop": "electron .",
+    "build": "electron-builder --win portable",
+    "build:dir": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "com.html-pdf.app",
+    "productName": "HTML to PDF",
+    "files": [
+      "html2pdf-lib.js",
+      "pdf-postprocess.js",
+      "electron-main.js",
+      "electron-preload.js",
+      "ui/**",
+      "node_modules/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": ["portable", "nsis"],
+      "icon": null
+    }
   },
   "keywords": [],
   "author": "",
@@ -17,6 +39,8 @@
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
     "commander": "^15.0.0",
+    "electron": "^42.3.2",
+    "electron-builder": "^26.8.1",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "pdf-lib": "^1.17.1",
