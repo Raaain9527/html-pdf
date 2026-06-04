@@ -530,13 +530,17 @@ $('#exportBtn').addEventListener('click', async () => {
     const opts = collectOptions();
 
     if (isDesktop) {
-      // Tauri: Rust backend handles file/open dialogs + export
-      const url = typeof selectedFile === 'string' && /^https?:\/\//i.test(selectedFile) ? selectedFile : null;
-      const result = await window.__TAURI__.core.invoke('pick_and_export', {
-        url: url,
-        options: JSON.stringify(opts),
-      });
-      showStatus(`导出完成 ✓ ${result}`, 'success');
+      // Tauri: Rust backend opens file dialog + save dialog + exports
+      const useUrl = typeof selectedFile === 'string' && /^https?:\/\//i.test(selectedFile) ? selectedFile : null;
+      try {
+        const result = await window.__TAURI__.core.invoke('pick_and_export', {
+          url: useUrl,
+          options: JSON.stringify(opts),
+        });
+        showStatus(`导出完成 ✓ ${result}`, 'success');
+      } catch (e) {
+        showStatus(`导出失败: ${e}`, 'error');
+      }
     } else {
       // Browser: use server API
       const formData = new FormData();

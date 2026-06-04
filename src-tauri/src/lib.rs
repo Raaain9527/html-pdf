@@ -27,9 +27,11 @@ async fn pick_and_export(app: tauri::AppHandle, url: Option<String>, options: St
         _ => return Err("取消保存".into()),
     };
 
-    // 3. Parse options and build command
+    // 3. Build command — run from project root so html2pdf.js is found
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let mut cmd = Command::new("node");
-    cmd.arg("html2pdf.js")
+    cmd.current_dir(project_root)
+        .arg(project_root.join("html2pdf.js"))
         .arg(&input)
         .arg("-o")
         .arg(&output_path);
