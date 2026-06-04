@@ -56,8 +56,12 @@ function parseOptions(body) {
 
 function sendPdf(res, filePath, downloadName, cleanupFiles = []) {
   const encoded = encodeURIComponent(downloadName);
+  res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition',
     `attachment; filename="${downloadName.replace(/"/g, '')}"; filename*=UTF-8''${encoded}`);
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Transfer-Encoding', 'binary');
   res.sendFile(filePath, (err) => {
     cleanupFiles.forEach(f => { try { fs.unlinkSync(f); } catch (_) {} });
     if (err && !res.headersSent) res.status(500).json({ error: err.message });
@@ -67,14 +71,16 @@ function sendPdf(res, filePath, downloadName, cleanupFiles = []) {
 app.post('/api/export/file', upload.single('html'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const filePath = req.file.path;
-    const outputPath = filePath + '.pdf';
+    // Multer saves without extension — Chrome needs .html to render properly
+    const htmlPath = req.file.path + '.html';
+    fs.renameSync(req.file.path, htmlPath);
+    const outputPath = req.file.path + '.pdf';
 
-    const result = await exportPage(null, filePath, outputPath, parseOptions(req.body));
+    const result = await exportPage(null, htmlPath, outputPath, parseOptions(req.body));
     if (!result.ok) throw new Error(result.error);
 
     const downloadName = `${path.parse(req.file.originalname).name}.pdf`;
-    sendPdf(res, outputPath, downloadName, [filePath, outputPath]);
+    sendPdf(res, outputPath, downloadName, [htmlPath, outputPath]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
