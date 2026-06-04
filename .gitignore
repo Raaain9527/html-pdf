@@ -2,6 +2,7 @@ node_modules/
 uploads/
 .claude/
 .obsidian/
+release/
 *.tmp.pdf
 *.log
 米哈游-*.html
