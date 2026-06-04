@@ -9,3 +9,5 @@ release/
 .DS_Store
 Thumbs.db
 *.pdf
+src-tauri/target/
+src-tauri/gen/

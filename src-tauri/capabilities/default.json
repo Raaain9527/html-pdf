@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/tauri/dev/crates/tauri-utils/schema/capability-schema.json",
+  "identifier": "default",
+  "description": "Default capability",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "shell:default",
+    "shell:allow-open"
+  ]
+}

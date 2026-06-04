@@ -2,39 +2,13 @@
   "name": "html-pdf",
   "version": "1.0.1",
   "description": "Export HTML to single-page vector PDF with selectable text",
-  "main": "electron-main.js",
   "bin": {
     "html2pdf": "./html2pdf.js"
   },
   "scripts": {
     "start": "node html2pdf.js",
     "ui": "node server.js",
-    "desktop": "electron .",
-    "build": "electron-builder --win portable --x64",
-    "build:dir": "electron-builder --win dir --x64"
-  },
-  "build": {
-    "appId": "com.html-pdf.app",
-    "productName": "HTML-to-PDF",
-    "files": [
-      "html2pdf-lib.js",
-      "pdf-postprocess.js",
-      "electron-main.js",
-      "electron-preload.js",
-      "ui/**",
-      "node_modules/**"
-    ],
-    "extraMetadata": {
-      "main": "electron-main.js"
-    },
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": ["portable"],
-      "icon": null
-    },
-    "asar": true
+    "desktop": "cargo build --release --manifest-path src-tauri/Cargo.toml && src-tauri/target/release/html-pdf.exe"
   },
   "keywords": [],
   "author": "Raaain",
@@ -42,16 +16,13 @@
   "type": "commonjs",
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/cli": "^2.11.2",
     "commander": "^15.0.0",
     "express": "^5.2.1",
     "multer": "^2.1.1",
-    "pdf-lib": "^1.17.1",
     "pdf-lib-plus-encrypt": "^1.1.0",
     "puppeteer": "^25.1.0",
     "puppeteer-core": "^25.1.0"
-  },
-  "devDependencies": {
-    "electron": "^42.3.2",
-    "electron-builder": "^26.8.1"
   }
 }

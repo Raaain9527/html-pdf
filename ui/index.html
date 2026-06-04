@@ -408,7 +408,7 @@ body {
 <script>
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-const isElectron = window.electronAPI?.isElectron ?? false;
+const isDesktop = !!window.__TAURI__;
 
 // Advanced toggle
 $('#advancedToggle').addEventListener('click', () => {
@@ -465,51 +465,21 @@ const fileInput = $('#fileInput');
 const fileSelected = $('#fileSelected');
 let selectedFile = null;   // Browser: File object | Electron: file path string
 
-// Electron: native open dialog button
-if (isElectron) {
-  const openBtn = document.createElement('button');
-  openBtn.className = 'btn btn-secondary';
-  openBtn.style.cssText = 'margin-top:12px;width:100%;';
-  openBtn.textContent = '浏览文件...';
-  openBtn.addEventListener('click', async () => {
-    await window.electronAPI.openFile();
+// Desktop (Tauri): file selection handled by Rust backend
+if (isDesktop) {
+  dropZone.addEventListener('click', () => {
+    // Trigger file tab selection
+    $$('.tab[data-tab="file"]')[0].click();
+    selectedFile = 'desktop';
+    updateExportState();
   });
-  dropZone.parentNode.insertBefore(openBtn, dropZone.nextSibling);
-
-  // Receive file path from main process
-  window.electronAPI.onFileSelected((filePath) => {
-    if (filePath) {
-      selectedFile = filePath;
-      const name = filePath.split(/[\\/]/).pop();
-      fileSelected.style.display = 'flex';
-      fileSelected.innerHTML = `<span style="color:var(--accent);font-weight:600;">📄</span> ${name}`;
-      updateExportState();
-    }
-  });
-
-  // Click drop zone to open native dialog
-  dropZone.addEventListener('click', () => window.electronAPI.openFile());
-
-  // Drag-and-drop for Electron
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      if (file.path) {
-        // Electron adds .path to File objects
-        selectedFile = file.path;
-        const name = file.path.split(/[\\/]/).pop();
-        fileSelected.style.display = 'flex';
-        fileSelected.innerHTML = `<span style="color:var(--accent);font-weight:600;">📄</span> ${name}`;
-      } else {
-        handleFile(file);
-      }
-      updateExportState();
-    }
-  });
+  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
+
+  // Desktop mode: mark as ready for file pick
+  selectedFile = 'desktop';
+  updateExportState();
 } else {
   // Browser: drag-drop
   dropZone.addEventListener('click', () => fileInput.click());
@@ -559,18 +529,14 @@ $('#exportBtn').addEventListener('click', async () => {
   try {
     const opts = collectOptions();
 
-    if (isElectron) {
-      // Electron: use IPC (native save dialog + direct export)
-      let result;
-      if (typeof selectedFile === 'string' && /^https?:\/\//i.test(selectedFile)) {
-        result = await window.electronAPI.exportUrl(selectedFile, opts);
-      } else {
-        const inputPath = typeof selectedFile === 'string' ? selectedFile : selectedFile.path || selectedFile.name;
-        result = await window.electronAPI.exportFile(inputPath, opts);
-      }
-      if (result.cancel) { showStatus('已取消', ''); return; }
-      if (!result.ok) throw new Error(result.error);
-      showStatus('导出完成 ✓', 'success');
+    if (isDesktop) {
+      // Tauri: Rust backend handles file/open dialogs + export
+      const url = typeof selectedFile === 'string' && /^https?:\/\//i.test(selectedFile) ? selectedFile : null;
+      const result = await window.__TAURI__.core.invoke('pick_and_export', {
+        url: url,
+        options: JSON.stringify(opts),
+      });
+      showStatus(`导出完成 ✓ ${result}`, 'success');
     } else {
       // Browser: use server API
       const formData = new FormData();

@@ -1,0 +1,33 @@
+{
+  "productName": "HTML-to-PDF",
+  "version": "1.0.1",
+  "identifier": "com.html-pdf.app",
+  "build": {
+    "frontendDist": "../ui",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "HTML → PDF",
+        "width": 800,
+        "height": 780,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  }
+}
