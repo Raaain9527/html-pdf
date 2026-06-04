@@ -8,21 +8,29 @@
     "beforeBuildCommand": ""
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "title": "HTML → PDF",
+        "title": "HTML -> PDF",
         "width": 800,
         "height": 780,
         "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../nodejs-portable/node.exe": "nodejs-portable/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

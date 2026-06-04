@@ -409,28 +409,10 @@ body {
 <script>
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-
-// --- Desktop Tauri (hardcoded) ---
-let selectedFile = null; // file path string or URL string
-
-function updateExportState() {
-  const hasFile = !!selectedFile || !!$('#urlInput').value.trim();
-  $('#exportBtn').disabled = !hasFile;
-  if (selectedFile) {
-    let label;
-    if (/^https?:\/\//i.test(selectedFile)) {
-      label = selectedFile;
-    } else {
-      label = selectedFile.split(/[\\/]/).pop();
-    }
-    $('#fileSelected').style.display = 'flex';
-    $('#fileSelected').innerHTML = `<span style="color:var(--accent);font-weight:600;">📄</span> <span style="font-family:var(--mono);word-break:break-all;">${label}</span>`;
-    $('#exportHint').textContent = '就绪 — 点击导出单页矢量 PDF';
-  } else {
-    $('#fileSelected').style.display = 'none';
-    $('#exportHint').textContent = '请先选择 HTML 文件或输入网页 URL';
-  }
-}
+const isDesktop = !!window.__TAURI__;
+// Debug: show runtime mode
+const dbg = $('#debugInfo');
+dbg.textContent = `mode: ${isDesktop ? 'DESKTOP (Tauri)' : 'BROWSER'} | __TAURI__: ${typeof window.__TAURI__} | proto: ${window.location.protocol}`;
 
 // Advanced toggle
 $('#advancedToggle').addEventListener('click', () => {
@@ -441,7 +423,7 @@ $('#advancedToggle').addEventListener('click', () => {
   arrow.textContent = open ? '▸' : '▾';
 });
 
-// Tab switching
+// --- Tab switching ---
 $$('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     $$('.tab').forEach(t => t.classList.remove('active'));
@@ -452,6 +434,7 @@ $$('.tab').forEach(tab => {
   });
 });
 
+// Collect export options from form fields
 function collectOptions() {
   const opts = {
     viewportWidth: parseInt($('#viewportWidth').value) || 1280,
@@ -461,7 +444,14 @@ function collectOptions() {
     marginTop: '0px', marginRight: '0px', marginBottom: '0px', marginLeft: '0px',
   };
   const wt = $('#watermarkText').value.trim();
-  if (wt) { opts.watermark = { text: wt, opacity: parseFloat($('#watermarkOpacity').value)||0.08, rotation: parseFloat($('#watermarkRotation').value)||-30, fontSize: parseInt($('#watermarkSize').value)||60 }; }
+  if (wt) {
+    opts.watermark = {
+      text: wt,
+      opacity: parseFloat($('#watermarkOpacity').value) || 0.08,
+      rotation: parseFloat($('#watermarkRotation').value) || -30,
+      fontSize: parseInt($('#watermarkSize').value) || 60,
+    };
+  }
   const pw = $('#password').value.trim();
   if (pw) opts.password = { userPassword: pw, ownerPassword: $('#ownerPassword').value.trim() || pw };
   const meta = {};
@@ -473,45 +463,65 @@ function collectOptions() {
   return opts;
 }
 
-// --- File Tab: drop zone opens native file dialog ---
+// --- File handling ---
 const dropZone = $('#dropZone');
-dropZone.addEventListener('click', async () => {
-  try {
-    selectedFile = await window.__TAURI__.core.invoke('pick_file');
-    updateExportState();
-  } catch (e) { /* cancelled */ }
-});
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
+const fileInput = $('#fileInput');
+const fileSelected = $('#fileSelected');
+let selectedFile = null;   // Browser: File object | Electron: file path string
 
-// Listen for Tauri drag-drop events from Rust
-if (window.__TAURI__?.event) {
-  window.__TAURI__.event.listen('file-dropped', (event) => {
-    selectedFile = event.payload;
+// Desktop (Tauri): file selection handled by Rust backend
+if (isDesktop) {
+  dropZone.addEventListener('click', () => {
+    // Trigger file tab selection
+    $$('.tab[data-tab="file"]')[0].click();
+    selectedFile = 'desktop';
     updateExportState();
+  });
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
+
+  // Desktop mode: mark as ready for file pick
+  selectedFile = 'desktop';
+  updateExportState();
+} else {
+  // Browser: drag-drop
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
   });
 }
 
-// --- URL Tab ---
+function handleFile(file) {
+  if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
+    showStatus('请选择 .html 或 .htm 文件', 'error');
+    return;
+  }
+  selectedFile = file;
+  fileSelected.style.display = 'flex';
+  fileSelected.innerHTML = `<span style="color:var(--accent);font-weight:600;">📄</span> ${file.name} <span style="color:var(--text-muted);font-size:11px;">(${(file.size/1024).toFixed(1)} KB)</span>`;
+  updateExportState();
+}
+
+// --- URL handling ---
 $('#urlFetch').addEventListener('click', () => {
   const url = $('#urlInput').value.trim();
   if (!url) return;
   try { new URL(url); } catch { showStatus('请输入有效的 URL', 'error'); return; }
   selectedFile = url;
-  $('#urlStatus').textContent = '✓ ' + url;
+  $('#urlStatus').textContent = `✓ ${url}`;
   updateExportState();
 });
-// Also trigger on Enter in URL input
-$('#urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#urlFetch').click(); });
 
 // --- Export ---
 $('#exportBtn').addEventListener('click', async () => {
-  // Resolve input: URL tab check first
-  if ($('#tab-url').style.display !== 'none') {
-    const url = $('#urlInput').value.trim();
-    if (url) selectedFile = url;
-  }
   if (!selectedFile) return;
 
   const btn = $('#exportBtn');
@@ -519,36 +529,100 @@ $('#exportBtn').addEventListener('click', async () => {
   btn.disabled = true;
   spinner.style.display = '';
   showStatus('正在渲染...', 'loading');
+
   try {
     const opts = collectOptions();
-    const result = await window.__TAURI__.core.invoke('export_pdf', {
-      input: selectedFile,
-      options: JSON.stringify(opts),
-    });
-    showStatus('导出完成 ✓ ' + result, 'success');
-  } catch (e) {
-    showStatus('导出失败: ' + (typeof e === 'string' ? e : JSON.stringify(e)), 'error');
+
+    if (isDesktop) {
+      // Tauri: Rust backend opens file dialog + save dialog + exports
+      const useUrl = typeof selectedFile === 'string' && /^https?:\/\//i.test(selectedFile) ? selectedFile : null;
+      try {
+        const result = await window.__TAURI__.core.invoke('pick_and_export', {
+          url: useUrl,
+          options: JSON.stringify(opts),
+        });
+        showStatus(`导出完成 ✓ ${result}`, 'success');
+      } catch (e) {
+        showStatus(`导出失败: ${e}`, 'error');
+      }
+    } else {
+      // Browser: use server API
+      const formData = new FormData();
+      for (const [k, v] of Object.entries(opts)) {
+        if (typeof v === 'object') continue;
+        formData.append(k, v);
+      }
+      // Re-apply advanced fields for server compatibility
+      if (opts.watermark) {
+        formData.append('watermarkText', opts.watermark.text);
+        formData.append('watermarkOpacity', opts.watermark.opacity);
+        formData.append('watermarkRotation', opts.watermark.rotation);
+        formData.append('watermarkSize', opts.watermark.fontSize);
+      }
+      if (opts.password) {
+        formData.append('password', opts.password.userPassword);
+        formData.append('ownerPassword', opts.password.ownerPassword);
+      }
+      if (opts.metadata) {
+        if (opts.metadata.title) formData.append('metaTitle', opts.metadata.title);
+        if (opts.metadata.author) formData.append('metaAuthor', opts.metadata.author);
+        if (opts.metadata.subject) formData.append('metaSubject', opts.metadata.subject);
+        if (opts.metadata.keywords) formData.append('metaKeywords', opts.metadata.keywords);
+      }
+
+      let endpoint, payload;
+      if (typeof selectedFile === 'string') {
+        endpoint = '/api/export/url';
+        payload = { url: selectedFile, ...Object.fromEntries(formData) };
+      } else {
+        endpoint = '/api/export/file';
+        formData.append('html', selectedFile);
+        payload = formData;
+      }
+
+      const isForm = payload instanceof FormData;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        ...(isForm ? { body: payload } : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error);
+      }
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = typeof selectedFile === 'string'
+        ? new URL(selectedFile).hostname + '.pdf'
+        : selectedFile.name.replace(/\.html?$/i, '') + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+      showStatus('导出完成 ✓', 'success');
+    }
+  } catch (err) {
+    showStatus(`导出失败: ${err.message}`, 'error');
   } finally {
     btn.disabled = false;
     spinner.style.display = 'none';
+    updateExportState();
   }
 });
+
+function updateExportState() {
+  const hasFile = !!selectedFile;
+  $('#exportBtn').disabled = !hasFile;
+  $('#exportHint').textContent = hasFile ? '点击导出单页矢量 PDF' : '请先选择文件或输入 URL';
+}
 
 function showStatus(msg, type) {
   const el = $('#status');
   el.textContent = msg;
   el.className = 'status show ' + type;
-  if (type === 'success') setTimeout(() => el.classList.remove('show'), 6000);
+  if (type === 'success') setTimeout(() => el.classList.remove('show'), 4000);
 }
-
-// Check Node.js availability on startup
-(async () => {
-  try {
-    const ok = await window.__TAURI__.core.invoke('check_node');
-    if (!ok) showStatus('⚠ 未检测到 Node.js，PDF 导出将无法使用。请安装 Node.js: https://nodejs.org', 'error');
-  } catch(e) {}
-  updateExportState();
-})();
 </script>
 </body>
 </html>

@@ -11,3 +11,4 @@ Thumbs.db
 *.pdf
 src-tauri/target/
 src-tauri/gen/
+nodejs-portable/

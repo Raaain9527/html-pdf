@@ -8,6 +8,7 @@ const app = express();
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
 
 app.use(express.json());
+app.get('/', (_req, res) => res.redirect('/web.html'));
 app.use(express.static(path.join(__dirname, 'ui')));
 
 function parseOptions(body) {
@@ -53,6 +54,16 @@ function parseOptions(body) {
   return opts;
 }
 
+function sendPdf(res, filePath, downloadName, cleanupFiles = []) {
+  const encoded = encodeURIComponent(downloadName);
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${downloadName.replace(/"/g, '')}"; filename*=UTF-8''${encoded}`);
+  res.sendFile(filePath, (err) => {
+    cleanupFiles.forEach(f => { try { fs.unlinkSync(f); } catch (_) {} });
+    if (err && !res.headersSent) res.status(500).json({ error: err.message });
+  });
+}
+
 app.post('/api/export/file', upload.single('html'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -63,10 +74,7 @@ app.post('/api/export/file', upload.single('html'), async (req, res) => {
     if (!result.ok) throw new Error(result.error);
 
     const downloadName = `${path.parse(req.file.originalname).name}.pdf`;
-    res.download(outputPath, downloadName, () => {
-      try { fs.unlinkSync(filePath); } catch (_) {}
-      try { fs.unlinkSync(outputPath); } catch (_) {}
-    });
+    sendPdf(res, outputPath, downloadName, [filePath, outputPath]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -82,9 +90,7 @@ app.post('/api/export/url', async (req, res) => {
     if (!result.ok) throw new Error(result.error);
 
     const urlObj = new URL(url);
-    res.download(outputPath, `${urlObj.hostname}.pdf`, () => {
-      try { fs.unlinkSync(outputPath); } catch (_) {}
-    });
+    sendPdf(res, outputPath, `${urlObj.hostname}.pdf`, [outputPath]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
