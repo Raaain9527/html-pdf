@@ -108,9 +108,16 @@ cargo build --release --manifest-path src-tauri/Cargo.toml
 
 ## 后续计划
 
-- [ ] **Chrome 直调模式** — Rust 直接调用 Chrome `--print-to-pdf`，移除 Node.js 依赖
-- [ ] PDF 书签/目录生成
-- [ ] 图片水印支持
+| 优先级 | 功能 | 描述 |
+|------|------|------|
+| **P0** | 实时预览 | 导出前渲染预览，视口宽度/缩放等参数变化时预览实时更新。左右分栏布局（左侧设置、右侧 iframe 预览），解决"盲操作"问题 |
+| **P0** | 交互式导出 | 预览中开启交互模式后，可点击页面元素（展开折叠区、切换标签等），导出交互后的 DOM 状态而非默认 HTML |
+| P2 | Chrome 直调模式 | Rust 直接调用 Chrome `--headless --print-to-pdf`，移除 Node.js 依赖 |
+| P3 | PDF 书签 | 根据 HTML h1–h6 自动生成 PDF 目录大纲 |
+| P3 | 图片水印 | 支持 PNG/JPEG 图片作为水印 |
+| P3 | macOS 支持 | 适配 macOS 桌面端 |
+
+详见 [PRD §3.3–3.4](./PRD.md)。
 
 ## License
 
