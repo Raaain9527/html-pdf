@@ -138,12 +138,9 @@ async function exportPage(browser, input, output, options = {}) {
     const pdfWidth = options.width || `${pageMetrics.width}px`;
     const pdfHeight = options.height || `${pageMetrics.height}px`;
 
-    // If a fixed-width content wrapper was detected, shrink the viewport
-    // to match so the PDF page has no extra white margins
-    if (!options.width && pageMetrics.width !== vpWidth) {
-      await page.setViewport({ width: pageMetrics.width, height: 900, deviceScaleFactor: 2 });
-      await new Promise(r => setTimeout(r, 300));
-    }
+    // Force screen media type so @media print rules don't override
+    // the layout the user designed for screen display
+    await page.emulateMediaType('screen');
 
     await page.pdf({
       path: output,
