@@ -88,51 +88,18 @@ async function exportPage(browser, input, output, options = {}) {
       await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     }
 
-    // Remove all @media print rules so page.pdf() renders the
-    // same layout as the browser. (page.pdf() uses print emulation
-    // internally, so @media print CSS would otherwise override
-    // widths, fonts, and @page { size: A4 } would force pagination.)
-    await page.evaluate(() => {
-      for (const sheet of document.styleSheets) {
-        try {
-          for (let i = sheet.cssRules.length - 1; i >= 0; i--) {
-            const rule = sheet.cssRules[i];
-            if (rule.conditionText && /print/i.test(rule.conditionText)) {
-              sheet.deleteRule(i);
-            }
-          }
-        } catch (_) {
-          // Cross-origin stylesheets throw on cssRules access — skip
-        }
-      }
-    });
+    // Emulate screen media so @media print rules don't apply.
+    // This is the baseline that produces correct layout matching
+    // the browser — confirmed by the user on an earlier version.
+    await page.emulateMediaType('screen');
 
-    const pageMetrics = await page.evaluate(() => {
+    // Measure dimensions after screen emulation is active.
+    const pageMetrics = await page.evaluate((vw) => {
       const html = document.documentElement;
       const body = document.body;
 
       const origOverflow = html.style.overflow;
       html.style.overflow = 'visible';
-
-      // Detect the actual content boundary: look for a fixed-width
-      // container (body with max-width, or a child wrapper).
-      let contentWidth = html.clientWidth;
-      if (body) {
-        const bodyRect = body.getBoundingClientRect();
-        if (bodyRect.width < html.clientWidth * 0.95) {
-          contentWidth = Math.ceil(bodyRect.width);
-        } else {
-          let bestW = 0;
-          for (const child of body.children) {
-            const r = child.getBoundingClientRect();
-            if (r.width > 100 && r.width < html.clientWidth * 0.95 && r.width > bestW) {
-              bestW = Math.ceil(r.width);
-            }
-          }
-          if (bestW > 0) contentWidth = bestW;
-          else contentWidth = Math.ceil(bodyRect.width);
-        }
-      }
 
       const scrollHeight = Math.max(
         html.scrollHeight,
@@ -140,8 +107,8 @@ async function exportPage(browser, input, output, options = {}) {
       );
 
       html.style.overflow = origOverflow;
-      return { width: contentWidth, height: scrollHeight };
-    });
+      return { width: vw, height: scrollHeight };
+    }, vpWidth);
 
     const pdfWidth = options.width || `${pageMetrics.width}px`;
     const pdfHeight = options.height || `${pageMetrics.height}px`;
