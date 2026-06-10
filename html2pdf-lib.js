@@ -88,7 +88,10 @@ async function exportPage(browser, input, output, options = {}) {
       await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     }
 
-    const pageMetrics = await page.evaluate(() => {
+    // Measure page dimensions. Also detect if there's a fixed-width content
+    // wrapper centered in a wider body — if so, reposition it to (0,0) and
+    // resize the viewport so the PDF page exactly fits the wrapper.
+    let pageMetrics = await page.evaluate(() => {
       const html = document.documentElement;
       const body = document.body;
 
@@ -97,15 +100,34 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.overflow = 'visible';
       html.style.height = 'auto';
 
-      // Use viewport width as the PDF page width. The content may have a
-      // fixed-width wrapper (like `.page { width: 860px }`) centered in a
-      // wider body — but the PDF captures from (0,0), so using the wrapper
-      // width would clip the right side. Keep the full viewport width.
-      // Users who want exact content width can set `--width` manually.
       let contentWidth = html.clientWidth;
+      let wrapperInfo = null;
+
       if (body) {
         const bodyRect = body.getBoundingClientRect();
         contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
+
+        // Detect fixed-width wrapper: body itself or a direct child
+        // that doesn't stretch to full viewport width
+        if (bodyRect.width < html.clientWidth * 0.95) {
+          wrapperInfo = { width: Math.ceil(bodyRect.width), left: Math.ceil(bodyRect.left) };
+        } else {
+          for (const child of body.children) {
+            const r = child.getBoundingClientRect();
+            if (r.width < html.clientWidth * 0.95 && r.width > 100 && r.width > (wrapperInfo ? wrapperInfo.width : 0)) {
+              wrapperInfo = { width: Math.ceil(r.width), left: Math.ceil(r.left) };
+            }
+          }
+        }
+        // If wrapper found, shift it visually to x=0 and hide body background.
+        // transform leaves the layout unchanged (no reflow), so content
+        // renders exactly as the user designed it in the browser.
+        if (wrapperInfo && wrapperInfo.left > 0) {
+          body.style.background = 'white';
+          body.style.setProperty('background', 'white', 'important');
+          body.style.transform = `translateX(-${wrapperInfo.left}px)`;
+          contentWidth = wrapperInfo.width;
+        }
       }
 
       const scrollHeight = Math.max(
@@ -117,8 +139,9 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.overflow = origOverflow;
       html.style.height = origHeight;
 
-      return { width: contentWidth, height: scrollHeight };
+      return { width: contentWidth, height: scrollHeight, wrapperShifted: wrapperInfo && wrapperInfo.left > 0 };
     });
+
 
     const pdfWidth = options.width || `${pageMetrics.width}px`;
     const pdfHeight = options.height || `${pageMetrics.height}px`;
