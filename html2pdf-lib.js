@@ -76,6 +76,7 @@ async function exportPage(browser, input, output, options = {}) {
     const vpWidth = options.viewportWidth ? parseInt(options.viewportWidth) : 1280;
     await page.setViewport({ width: vpWidth, height: 900, deviceScaleFactor: 2 });
 
+    // Load the page
     if (/^https?:\/\//i.test(input)) {
       await page.goto(input, { waitUntil: 'networkidle0', timeout: 60000 });
     } else {
@@ -83,44 +84,79 @@ async function exportPage(browser, input, output, options = {}) {
       if (!fs.existsSync(filePath)) {
         return { ok: false, error: `文件不存在: ${filePath}` };
       }
-      // Convert Windows backslashes to forward slashes for file:// URL
       const fileUrl = 'file:///' + filePath.replace(/\\/g, '/').replace(/^\/+/, '');
       await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     }
 
-    let pageMetrics = await page.evaluate(() => {
+    // Neutralise @media print CSS so page.pdf() (which uses print
+    // emulation internally) renders the same layout as the browser.
+    // Without this, @page { size: A4 } forces pagination and @media
+    // print rules override widths/fonts/padding.
+    await page.evaluate(() => {
+      const style = document.createElement('style');
+      style.id = '__html2pdf__';
+      style.textContent = `
+        @media print {
+          @page { size: auto !important; margin: 0 !important; }
+          *, *::before, *::after {
+            font-size: inherit !important;
+            line-height: inherit !important;
+            margin: inherit !important;
+            padding: inherit !important;
+            width: inherit !important;
+            max-width: inherit !important;
+            min-width: inherit !important;
+            box-shadow: inherit !important;
+            background: inherit !important;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    });
+
+    // Wait for the override style to take effect, then measure.
+    // Measurement now uses screen-equivalent layout since print
+    // rules are neutralised.
+    await new Promise(r => setTimeout(r, 200));
+
+    const pageMetrics = await page.evaluate(() => {
       const html = document.documentElement;
       const body = document.body;
 
       const origOverflow = html.style.overflow;
-      const origHeight = html.style.height;
       html.style.overflow = 'visible';
-      html.style.height = 'auto';
 
+      // Detect the actual content boundary: look for a fixed-width
+      // container (body with max-width, or a child wrapper).
       let contentWidth = html.clientWidth;
       if (body) {
         const bodyRect = body.getBoundingClientRect();
-        contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
+        if (bodyRect.width < html.clientWidth * 0.95) {
+          contentWidth = Math.ceil(bodyRect.width);
+        } else {
+          let bestW = 0;
+          for (const child of body.children) {
+            const r = child.getBoundingClientRect();
+            if (r.width > 100 && r.width < html.clientWidth * 0.95 && r.width > bestW) {
+              bestW = Math.ceil(r.width);
+            }
+          }
+          if (bestW > 0) contentWidth = bestW;
+          else contentWidth = Math.ceil(bodyRect.width);
+        }
       }
 
       const scrollHeight = Math.max(
         html.scrollHeight,
-        body ? body.scrollHeight : 0,
-        html.clientHeight
+        body ? body.scrollHeight : 0
       );
 
       html.style.overflow = origOverflow;
-      html.style.height = origHeight;
-
       return { width: contentWidth, height: scrollHeight };
     });
 
     const pdfWidth = options.width || `${pageMetrics.width}px`;
     const pdfHeight = options.height || `${pageMetrics.height}px`;
-
-    // Force screen media type so @media print rules don't override
-    // the layout the user designed for screen display
-    await page.emulateMediaType('screen');
 
     await page.pdf({
       path: output,
@@ -138,8 +174,8 @@ async function exportPage(browser, input, output, options = {}) {
       scale: options.scale || 1,
     });
 
-    // If user specified a narrower --width, crop the PDF page using pdf-lib.
-    // This preserves vector text while removing side margins/background.
+    // If user specified a narrower --width, crop the PDF via pdf-lib.
+    // This preserves vector text while trimming side margins.
     if (options.width) {
       const targetW = parseInt(options.width);
       if (targetW > 0 && targetW < pageMetrics.width) {
@@ -147,10 +183,9 @@ async function exportPage(browser, input, output, options = {}) {
         const cropBytes = fs.readFileSync(output);
         const cropDoc = await PDFDocument.load(cropBytes);
         const pages = cropDoc.getPages();
+        const offsetX = Math.round((pageMetrics.width - targetW) / 2);
         for (const p of pages) {
           const { height } = p.getSize();
-          // Calculate left offset: center the crop on the content wrapper
-          const offsetX = Math.round((pageMetrics.width - targetW) / 2);
           p.setCropBox(offsetX, 0, offsetX + targetW, height);
           p.setMediaBox(offsetX, 0, offsetX + targetW, height);
         }
