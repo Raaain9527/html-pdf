@@ -168,8 +168,10 @@ async function exportPage(browser, input, output, options = {}) {
       const cropWpt = Math.round(cropW * SCALE);
       for (const p of pages) {
         const fullH = p.getSize().height;
+        // Move wrapper bottom edge to y=0. translateContent positive Y = up,
+        // so we use a negative shift to move content down toward the origin.
         const offsetY = pageMetrics.wrapperY
-          ? Math.round((fullH - (pageMetrics.wrapperY + pageMetrics.wrapperH) * SCALE))
+          ? Math.round(-(fullH - (pageMetrics.wrapperY + pageMetrics.wrapperH) * SCALE))
           : 0;
         p.translateContent(-offsetX, offsetY);
         const cropHpt = pageMetrics.wrapperH
