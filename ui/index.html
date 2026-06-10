@@ -290,8 +290,7 @@ async function loadPreview(input, firstLoad) {
         if (w) { detectedViewport = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
       }
 
-      const blob = new Blob([html], { type: 'text/html' });
-      $('#previewFrame').src = URL.createObjectURL(blob);
+      $('#previewFrame').srcdoc = html;
     } catch(e) { console.error(e); }
   }
   updatePreviewScale();
