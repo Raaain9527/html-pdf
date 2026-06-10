@@ -88,36 +88,24 @@ async function exportPage(browser, input, output, options = {}) {
       await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     }
 
-    // Neutralise @media print CSS so page.pdf() (which uses print
-    // emulation internally) renders the same layout as the browser.
-    // Without this, @page { size: A4 } forces pagination and @media
-    // print rules override widths/fonts/padding.
+    // Remove all @media print rules so page.pdf() renders the
+    // same layout as the browser. (page.pdf() uses print emulation
+    // internally, so @media print CSS would otherwise override
+    // widths, fonts, and @page { size: A4 } would force pagination.)
     await page.evaluate(() => {
-      const style = document.createElement('style');
-      style.id = '__html2pdf__';
-      style.textContent = `
-        @media print {
-          @page { size: auto !important; margin: 0 !important; }
-          *, *::before, *::after {
-            font-size: inherit !important;
-            line-height: inherit !important;
-            margin: inherit !important;
-            padding: inherit !important;
-            width: inherit !important;
-            max-width: inherit !important;
-            min-width: inherit !important;
-            box-shadow: inherit !important;
-            background: inherit !important;
+      for (const sheet of document.styleSheets) {
+        try {
+          for (let i = sheet.cssRules.length - 1; i >= 0; i--) {
+            const rule = sheet.cssRules[i];
+            if (rule.conditionText && /print/i.test(rule.conditionText)) {
+              sheet.deleteRule(i);
+            }
           }
+        } catch (_) {
+          // Cross-origin stylesheets throw on cssRules access — skip
         }
-      `;
-      document.head.appendChild(style);
+      }
     });
-
-    // Wait for the override style to take effect, then measure.
-    // Measurement now uses screen-equivalent layout since print
-    // rules are neutralised.
-    await new Promise(r => setTimeout(r, 200));
 
     const pageMetrics = await page.evaluate(() => {
       const html = document.documentElement;
