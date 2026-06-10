@@ -259,7 +259,9 @@ async function loadPreview(input, firstLoad) {
     try {
       const dir = input.replace(/[^\\/]+$/, '');
       let html = await window.__TAURI__.core.invoke('read_file', { path: input });
-      html = html.replace(/(<head[^>]*>)/i, `$1\n<meta name="viewport" content="width=device-width, initial-scale=1">`);
+      const vw = parseInt($('#viewportWidth').value) || 1680;
+      // Inject explicit pixel width — blob URL null-origin ignores device-width
+      html = html.replace(/(<head[^>]*>)/i, `$1\n<meta name="viewport" content="width=${vw}, initial-scale=1">`);
 
       // Embed relative images as base64 (blob URLs lose directory context)
       const parser = new DOMParser();
@@ -319,7 +321,10 @@ function updatePreviewScale() {
 
 function refreshPreview() {
   clearTimeout(previewDebounce);
-  previewDebounce = setTimeout(updatePreviewScale, 300);
+  previewDebounce = setTimeout(() => {
+    if (selectedFile && !/^https?:\/\//i.test(selectedFile)) loadPreview(selectedFile, false);
+    updatePreviewScale();
+  }, 300);
 }
 
 $('#viewportWidth').addEventListener('input', refreshPreview);
