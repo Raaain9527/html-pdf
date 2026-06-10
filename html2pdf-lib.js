@@ -88,9 +88,6 @@ async function exportPage(browser, input, output, options = {}) {
       await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     }
 
-    // Measure page dimensions. Also detect if there's a fixed-width content
-    // wrapper centered in a wider body — if so, reposition it to (0,0) and
-    // resize the viewport so the PDF page exactly fits the wrapper.
     let pageMetrics = await page.evaluate(() => {
       const html = document.documentElement;
       const body = document.body;
@@ -101,33 +98,9 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.height = 'auto';
 
       let contentWidth = html.clientWidth;
-      let wrapperInfo = null;
-
       if (body) {
         const bodyRect = body.getBoundingClientRect();
         contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
-
-        // Detect fixed-width wrapper: body itself or a direct child
-        // that doesn't stretch to full viewport width
-        if (bodyRect.width < html.clientWidth * 0.95) {
-          wrapperInfo = { width: Math.ceil(bodyRect.width), left: Math.ceil(bodyRect.left) };
-        } else {
-          for (const child of body.children) {
-            const r = child.getBoundingClientRect();
-            if (r.width < html.clientWidth * 0.95 && r.width > 100 && r.width > (wrapperInfo ? wrapperInfo.width : 0)) {
-              wrapperInfo = { width: Math.ceil(r.width), left: Math.ceil(r.left) };
-            }
-          }
-        }
-        // If wrapper found, shift it visually to x=0 and hide body background.
-        // transform leaves the layout unchanged (no reflow), so content
-        // renders exactly as the user designed it in the browser.
-        if (wrapperInfo && wrapperInfo.left > 0) {
-          body.style.background = 'white';
-          body.style.setProperty('background', 'white', 'important');
-          body.style.transform = `translateX(-${wrapperInfo.left}px)`;
-          contentWidth = wrapperInfo.width;
-        }
       }
 
       const scrollHeight = Math.max(
@@ -139,9 +112,8 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.overflow = origOverflow;
       html.style.height = origHeight;
 
-      return { width: contentWidth, height: scrollHeight, wrapperShifted: wrapperInfo && wrapperInfo.left > 0 };
+      return { width: contentWidth, height: scrollHeight };
     });
-
 
     const pdfWidth = options.width || `${pageMetrics.width}px`;
     const pdfHeight = options.height || `${pageMetrics.height}px`;
@@ -165,6 +137,26 @@ async function exportPage(browser, input, output, options = {}) {
       },
       scale: options.scale || 1,
     });
+
+    // If user specified a narrower --width, crop the PDF page using pdf-lib.
+    // This preserves vector text while removing side margins/background.
+    if (options.width) {
+      const targetW = parseInt(options.width);
+      if (targetW > 0 && targetW < pageMetrics.width) {
+        const { PDFDocument } = require('pdf-lib-plus-encrypt');
+        const cropBytes = fs.readFileSync(output);
+        const cropDoc = await PDFDocument.load(cropBytes);
+        const pages = cropDoc.getPages();
+        for (const p of pages) {
+          const { height } = p.getSize();
+          // Calculate left offset: center the crop on the content wrapper
+          const offsetX = Math.round((pageMetrics.width - targetW) / 2);
+          p.setCropBox(offsetX, 0, offsetX + targetW, height);
+          p.setMediaBox(offsetX, 0, offsetX + targetW, height);
+        }
+        fs.writeFileSync(output, await cropDoc.save());
+      }
+    }
 
     // Post-processing: watermark, password, metadata
     const needsPost = options.watermark || options.password || options.metadata;
