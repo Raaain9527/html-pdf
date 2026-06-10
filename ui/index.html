@@ -215,7 +215,7 @@ body {
       <span class="preview-scale-label" id="previewScale">1280px @ 100%</span>
     </div>
     <div class="preview-frame-wrap" id="previewWrap">
-      <iframe class="preview-frame" id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+      <iframe class="preview-frame" id="previewFrame"></iframe>
     </div>
   </div>
 </div>
@@ -246,29 +246,23 @@ document.addEventListener('mouseup', () => { dragging = false; divider.classList
 // --- Preview ---
 async function loadPreview(input, firstLoad) {
   if (!input) { $('#previewFrame').src = 'about:blank'; return; }
-  const vw = parseInt($('#viewportWidth').value) || 1280;
-  const sc = parseFloat($('#scale').value) || 1;
 
   if (/^https?:\/\//i.test(input)) {
     $('#previewFrame').src = input;
     $('#interactionMode').disabled = true;
   } else {
     $('#interactionMode').disabled = false;
-    try {
-      const html = await window.__TAURI__.core.invoke('read_file', { path: input });
-      if (firstLoad) {
+    // Load file directly — preserves relative paths for images/CSS
+    const fileUrl = 'file:///' + input.replace(/\\/g, '/').replace(/^\/+/, '');
+    $('#previewFrame').src = fileUrl;
+
+    if (firstLoad) {
+      try {
+        const html = await window.__TAURI__.core.invoke('read_file', { path: input });
         const w = detectContentWidth(html);
         if (w) { detectedViewport = w; $('#viewportWidth').value = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
-      }
-      const useW = detectedViewport || vw;
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      let meta = doc.querySelector('meta[name="viewport"]');
-      if (!meta) { meta = doc.createElement('meta'); meta.name = 'viewport'; doc.head.prepend(meta); }
-      meta.content = `width=${useW}, initial-scale=${sc}`;
-      const blob = new Blob(['<!DOCTYPE html>\n' + doc.documentElement.outerHTML], { type: 'text/html' });
-      $('#previewFrame').src = URL.createObjectURL(blob);
-    } catch(e) {}
+      } catch(e) {}
+    }
   }
   updatePreviewScale();
 }
