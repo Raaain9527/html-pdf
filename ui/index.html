@@ -238,11 +238,17 @@ async function loadPreview(input) {
     $('#interactionMode').disabled = false;
     try {
       const html = await window.__TAURI__.core.invoke('read_file', { path: input });
+      const detectedW = detectContentWidth(html);
+      if (detectedW && detectedW > 0) {
+        $('#viewportWidth').value = detectedW;
+        $('#exportHint').textContent = `检测到页面宽度: ${detectedW}px`;
+      }
+      const useW = detectedW || vw;
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       let meta = doc.querySelector('meta[name="viewport"]');
       if (!meta) { meta = doc.createElement('meta'); meta.name = 'viewport'; doc.head.prepend(meta); }
-      meta.content = `width=${vw}, initial-scale=${sc}`;
+      meta.content = `width=${useW}, initial-scale=${sc}`;
       const blob = new Blob(['<!DOCTYPE html>\n' + doc.documentElement.outerHTML], { type: 'text/html' });
       $('#previewFrame').src = URL.createObjectURL(blob);
     } catch(e) { /* file read failed */ }
@@ -250,15 +256,24 @@ async function loadPreview(input) {
   updatePreviewScale();
 }
 
+function detectContentWidth(html) {
+  // Try to extract the page's designed width from CSS rules
+  const bodyMatch = html.match(/body\s*\{[^}]*max-width\s*:\s*(\d+)px/i);
+  if (bodyMatch) return parseInt(bodyMatch[1]);
+  const pageMatch = html.match(/\.page\s*\{[^}]*width\s*:\s*(\d+)px/i);
+  if (pageMatch) return parseInt(pageMatch[1]);
+  const wrapperMatch = html.match(/(?:\.container|\.wrapper|\.main|main)\s*\{[^}]*width\s*:\s*(\d+)px/i);
+  if (wrapperMatch) return parseInt(wrapperMatch[1]);
+  return null;
+}
+
 function updatePreviewScale() {
-  const vw = parseInt($('#viewportWidth').value) || 1280;
   const wrap = $('#previewWrap');
   const frame = $('#previewFrame');
   const availW = wrap.clientWidth - 24;
-  const ratio = Math.min(1, availW / vw);
-  frame.style.width = vw + 'px';
-  frame.style.transform = `scale(${ratio})`;
-  $('#previewScale').textContent = `${vw}px @ ${Math.round(ratio*100)}%`;
+  frame.style.width = availW + 'px';
+  frame.style.transform = 'scale(1)';
+  $('#previewScale').textContent = `${availW}px (1:1)`;
 }
 
 function refreshPreview() {
