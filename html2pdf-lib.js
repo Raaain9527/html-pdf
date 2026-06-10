@@ -97,10 +97,28 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.overflow = 'visible';
       html.style.height = 'auto';
 
+      // Detect actual content width: find the rightmost edge of body's
+      // direct children. This handles centered fixed-width wrappers (common
+      // in resumes) instead of blindly using the full viewport width.
       let contentWidth = html.clientWidth;
       if (body) {
-        const bodyRect = body.getBoundingClientRect();
-        contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
+        let maxRight = 0;
+        for (const child of body.children) {
+          const r = child.getBoundingClientRect();
+          // Skip full-width elements (they stretch to viewport)
+          if (r.width < html.clientWidth * 0.95) {
+            maxRight = Math.max(maxRight, r.right);
+          }
+        }
+        if (maxRight > 0) {
+          // Add body's left padding so the content isn't clipped on the left
+          const bodyStyle = window.getComputedStyle(body);
+          const padLeft = parseFloat(bodyStyle.paddingLeft) || 0;
+          contentWidth = Math.ceil(maxRight + padLeft);
+        } else {
+          const bodyRect = body.getBoundingClientRect();
+          contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
+        }
       }
 
       const scrollHeight = Math.max(
