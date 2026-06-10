@@ -93,7 +93,9 @@ async function exportPage(browser, input, output, options = {}) {
     // the browser — confirmed by the user on an earlier version.
     await page.emulateMediaType('screen');
 
-    // Measure dimensions after screen emulation is active.
+    // Measure dimensions (screen emulation is active, so layout
+    // matches the browser). We capture both the full viewport and
+    // the actual content wrapper so we can crop the PDF afterwards.
     const pageMetrics = await page.evaluate((vw) => {
       const html = document.documentElement;
       const body = document.body;
@@ -101,13 +103,34 @@ async function exportPage(browser, input, output, options = {}) {
       const origOverflow = html.style.overflow;
       html.style.overflow = 'visible';
 
+      // Find the actual content wrapper width (for post-export cropping).
+      // This is the widest fixed-width container — body itself if it
+      // has max-width, or a direct child wrapper like `.page`.
+      let wrapperW = vw;
+      let wrapperX = 0;
+      if (body) {
+        const bodyRect = body.getBoundingClientRect();
+        if (bodyRect.width < vw * 0.95) {
+          wrapperW = Math.ceil(bodyRect.width);
+          wrapperX = Math.round(bodyRect.left);
+        } else {
+          for (const child of body.children) {
+            const r = child.getBoundingClientRect();
+            if (r.width > 100 && r.width < vw * 0.95 && r.width > wrapperW) {
+              wrapperW = Math.ceil(r.width);
+              wrapperX = Math.round(r.left);
+            }
+          }
+        }
+      }
+
       const scrollHeight = Math.max(
         html.scrollHeight,
         body ? body.scrollHeight : 0
       );
 
       html.style.overflow = origOverflow;
-      return { width: vw, height: scrollHeight };
+      return { width: vw, height: scrollHeight, wrapperW, wrapperX };
     }, vpWidth);
 
     const pdfWidth = options.width || `${pageMetrics.width}px`;
@@ -129,23 +152,22 @@ async function exportPage(browser, input, output, options = {}) {
       scale: options.scale || 1,
     });
 
-    // If user specified a narrower --width, crop the PDF via pdf-lib.
-    // This preserves vector text while trimming side margins.
-    if (options.width) {
-      const targetW = parseInt(options.width);
-      if (targetW > 0 && targetW < pageMetrics.width) {
-        const { PDFDocument } = require('pdf-lib-plus-encrypt');
-        const cropBytes = fs.readFileSync(output);
-        const cropDoc = await PDFDocument.load(cropBytes);
-        const pages = cropDoc.getPages();
-        const offsetX = Math.round((pageMetrics.width - targetW) / 2);
-        for (const p of pages) {
-          const { height } = p.getSize();
-          p.setCropBox(offsetX, 0, offsetX + targetW, height);
-          p.setMediaBox(offsetX, 0, offsetX + targetW, height);
-        }
-        fs.writeFileSync(output, await cropDoc.save());
+    // Crop the PDF to the content wrapper width (post-processing,
+    // after the PDF is fully rendered — preserves vector text).
+    const cropW = options.width ? parseInt(options.width) : pageMetrics.wrapperW;
+    if (cropW > 0 && cropW < pageMetrics.width) {
+      const { PDFDocument } = require('pdf-lib-plus-encrypt');
+      const cropBytes = fs.readFileSync(output);
+      const cropDoc = await PDFDocument.load(cropBytes);
+      const pages = cropDoc.getPages();
+      // Use the wrapper's actual left offset, falling back to center
+      const offsetX = pageMetrics.wrapperX || Math.round((pageMetrics.width - cropW) / 2);
+      for (const p of pages) {
+        const { height } = p.getSize();
+        p.setCropBox(offsetX, 0, offsetX + cropW, height);
+        p.setMediaBox(offsetX, 0, offsetX + cropW, height);
       }
+      fs.writeFileSync(output, await cropDoc.save());
     }
 
     // Post-processing: watermark, password, metadata
