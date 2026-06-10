@@ -12,3 +12,8 @@ Thumbs.db
 src-tauri/target/
 src-tauri/gen/
 nodejs-portable/
+AI作品展示报告*
+推文*
+*.png
+*.jpg
+*.zip
