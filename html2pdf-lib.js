@@ -74,7 +74,7 @@ async function exportPage(browser, input, output, options = {}) {
   const page = await browser.newPage();
   try {
     const vpWidth = options.viewportWidth ? parseInt(options.viewportWidth) : 1280;
-    await page.setViewport({ width: vpWidth, height: 900, deviceScaleFactor: 2 });
+    await page.setViewport({ width: vpWidth, height: 900, deviceScaleFactor: 1 });
 
     // Load the page
     if (/^https?:\/\//i.test(input)) {
@@ -106,20 +106,21 @@ async function exportPage(browser, input, output, options = {}) {
       // Find the actual content wrapper width (for post-export cropping).
       // This is the widest fixed-width container — body itself if it
       // has max-width, or a direct child wrapper like `.page`.
-      let wrapperW = vw;
+      let wrapperW = 0;
       let wrapperX = 0;
       if (body) {
         const bodyRect = body.getBoundingClientRect();
+        // Check body first (for max-width constrained layouts)
         if (bodyRect.width < vw * 0.95) {
           wrapperW = Math.ceil(bodyRect.width);
           wrapperX = Math.round(bodyRect.left);
-        } else {
-          for (const child of body.children) {
-            const r = child.getBoundingClientRect();
-            if (r.width > 100 && r.width < vw * 0.95 && r.width > wrapperW) {
-              wrapperW = Math.ceil(r.width);
-              wrapperX = Math.round(r.left);
-            }
+        }
+        // Also check direct children (for wrappers inside full-width body)
+        for (const child of body.children) {
+          const r = child.getBoundingClientRect();
+          if (r.width > 100 && r.width < vw * 0.95 && r.width > wrapperW) {
+            wrapperW = Math.ceil(r.width);
+            wrapperX = Math.round(r.left);
           }
         }
       }
@@ -154,20 +155,21 @@ async function exportPage(browser, input, output, options = {}) {
 
     // Crop the PDF to the content wrapper width (post-processing,
     // after the PDF is fully rendered — preserves vector text).
+    // page.pdf() converts CSS pixels to PDF points at 72/96 = 0.75×,
+    // so we must apply the same conversion to our crop coordinates.
     const cropW = options.width ? parseInt(options.width) : pageMetrics.wrapperW;
     if (cropW > 0 && cropW < pageMetrics.width) {
+      const SCALE = 72 / 96; // CSS px → PDF points
       const { PDFDocument } = require('pdf-lib-plus-encrypt');
       const cropBytes = fs.readFileSync(output);
       const cropDoc = await PDFDocument.load(cropBytes);
       const pages = cropDoc.getPages();
-      // Use the wrapper's actual left offset, falling back to center
-      const offsetX = pageMetrics.wrapperX || Math.round((pageMetrics.width - cropW) / 2);
+      const offsetX = Math.round((pageMetrics.wrapperX || Math.round((pageMetrics.width - cropW) / 2)) * SCALE);
+      const cropWpt = Math.round(cropW * SCALE);
       for (const p of pages) {
-        // Shift content left by offsetX so it starts at x=0,
-        // then set the page dimensions to the cropped width.
         p.translateContent(-offsetX, 0);
-        p.setMediaBox(0, 0, cropW, p.getSize().height);
-        p.setCropBox(0, 0, cropW, p.getSize().height);
+        p.setMediaBox(0, 0, cropWpt, p.getSize().height);
+        p.setCropBox(0, 0, cropWpt, p.getSize().height);
       }
       fs.writeFileSync(output, await cropDoc.save());
     }
