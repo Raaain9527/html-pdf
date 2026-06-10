@@ -12,8 +12,9 @@
     "windows": [
       {
         "title": "HTML -> PDF",
-        "width": 800,
+        "width": 1280,
         "height": 780,
+        "minWidth": 960,
         "resizable": true
       }
     ],

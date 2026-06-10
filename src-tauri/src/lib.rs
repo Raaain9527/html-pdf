@@ -68,6 +68,27 @@ fn node_exe_path() -> String {
 }
 
 #[tauri::command]
+fn read_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))
+}
+
+#[tauri::command]
+fn write_temp_html(original_path: Option<String>, html: String) -> Result<String, String> {
+    if let Some(ref orig) = original_path {
+        let orig_path = std::path::Path::new(orig);
+        let parent = orig_path.parent().unwrap_or(std::path::Path::new("."));
+        let temp_path = parent.join(".html-pdf-preview-temp.html");
+        std::fs::write(&temp_path, &html).map_err(|e| format!("写入失败: {}", e))?;
+        Ok(temp_path.to_string_lossy().to_string())
+    } else {
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("html-pdf-url-capture.html");
+        std::fs::write(&temp_path, &html).map_err(|e| format!("写入失败: {}", e))?;
+        Ok(temp_path.to_string_lossy().to_string())
+    }
+}
+
+#[tauri::command]
 fn check_node() -> bool {
     hidden_cmd(&node_exe_path()).arg("--version").output()
         .map(|o| o.status.success()).unwrap_or(false)
@@ -86,60 +107,71 @@ fn pick_file(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn export_pdf(app: tauri::AppHandle, input: String, options: String) -> Result<String, String> {
-    // Generate default output filename from input
-    let default_name = if input.starts_with("http://") || input.starts_with("https://") {
-        // For URLs, use hostname as default filename
-        input
-            .replace("https://", "")
-            .replace("http://", "")
-            .split('/')
-            .next()
-            .unwrap_or("webpage")
-            .to_string()
-    } else {
-        std::path::Path::new(&input)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "output".into())
-    };
-
-    // Save dialog
-    let output = app.dialog()
+fn pick_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let files = app.dialog()
         .file()
-        .add_filter("PDF", &["pdf"])
-        .set_file_name(&format!("{}.pdf", default_name))
-        .blocking_save_file();
-    let output_path = match output {
-        Some(FilePath::Path(p)) => p.to_string_lossy().to_string(),
-        _ => return Err("取消保存".into()),
-    };
-
-    // Run export
-    let project_root = find_project_root();
-    let script_path = project_root.join("html2pdf.js");
-
-    let mut cmd = hidden_cmd(&node_exe_path());
-    cmd.current_dir(&project_root)
-        .arg(&script_path)
-        .arg(&input)
-        .arg("-o")
-        .arg(&output_path);
-
-    if let Ok(opts) = serde_json::from_str::<serde_json::Value>(&options) {
-        apply_options(&mut cmd, &opts);
+        .add_filter("HTML", &["html", "htm"])
+        .blocking_pick_files();
+    match files {
+        Some(paths) if !paths.is_empty() => {
+            Ok(paths.into_iter()
+                .filter_map(|fp| match fp { FilePath::Path(p) => Some(p.to_string_lossy().to_string()), _ => None })
+                .collect())
+        }
+        _ => Err("取消选择".into()),
     }
-
-    let result = cmd.output().map_err(|e| format!("node 执行失败: {}", e))?;
-    if !result.status.success() {
-        return Err(String::from_utf8_lossy(&result.stderr).to_string());
-    }
-
-    let _ = Command::new("explorer").arg("/select,").arg(&output_path).spawn();
-    Ok(output_path)
 }
 
-fn apply_options(cmd: &mut Command, opts: &serde_json::Value) {
+#[tauri::command]
+fn export_pdf(app: tauri::AppHandle, input: String, options: String) -> Result<String, String> {
+    export_pdf_inner(app, vec![input], options)
+}
+
+fn export_pdf_inner(app: tauri::AppHandle, inputs: Vec<String>, options: String) -> Result<String, String> {
+    if inputs.is_empty() { return Err("没有输入文件".into()); }
+
+    let project_root = find_project_root();
+    let script_path = project_root.join("html2pdf.js");
+    let mut cmd = hidden_cmd(&node_exe_path());
+    cmd.current_dir(&project_root).arg(&script_path);
+
+    if inputs.len() == 1 {
+        // Single file: save dialog
+        let input = &inputs[0];
+        let default_name = if input.starts_with("http://") || input.starts_with("https://") {
+            input.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("webpage").to_string()
+        } else {
+            std::path::Path::new(input).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "output".into())
+        };
+        let output = app.dialog().file().add_filter("PDF", &["pdf"]).set_file_name(&format!("{}.pdf", default_name)).blocking_save_file();
+        let output_path = match output {
+            Some(FilePath::Path(p)) => p.to_string_lossy().to_string(),
+            _ => return Err("取消保存".into()),
+        };
+        cmd.arg(input).arg("-o").arg(&output_path);
+        if let Ok(opts) = serde_json::from_str::<serde_json::Value>(&options) { apply_options_from_json(&mut cmd, &opts); }
+        let result = cmd.output().map_err(|e| format!("node 执行失败: {}", e))?;
+        if !result.status.success() { return Err(String::from_utf8_lossy(&result.stderr).to_string()); }
+        let _ = Command::new("explorer").arg("/select,").arg(&output_path).spawn();
+        Ok(output_path)
+    } else {
+        // Batch: directory picker
+        let out_dir = app.dialog().file().blocking_pick_folder();
+        let out_dir_path = match out_dir {
+            Some(FilePath::Path(p)) => p.to_string_lossy().to_string(),
+            _ => return Err("取消选择输出目录".into()),
+        };
+        for input in &inputs { cmd.arg(input); }
+        cmd.arg("-o").arg(&out_dir_path);
+        if let Ok(opts) = serde_json::from_str::<serde_json::Value>(&options) { apply_options_from_json(&mut cmd, &opts); }
+        let result = cmd.output().map_err(|e| format!("node 执行失败: {}", e))?;
+        if !result.status.success() { return Err(String::from_utf8_lossy(&result.stderr).to_string()); }
+        let _ = Command::new("explorer").arg(&out_dir_path).spawn();
+        Ok(out_dir_path)
+    }
+}
+
+fn apply_options_from_json(cmd: &mut Command, opts: &serde_json::Value) {
     if let Some(w) = opts.get("watermark").and_then(|v| v.as_object()) {
         if let Some(t) = w.get("text").and_then(|v| v.as_str()) {
             if !t.is_empty() { cmd.arg("--watermark").arg(t); }
@@ -208,15 +240,18 @@ pub fn run() {
                 let h = handle.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                        if let Some(path) = paths.first() {
-                            let _ = h.emit("file-dropped", path.to_string_lossy().to_string());
+                        let file_paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                        if file_paths.len() == 1 {
+                            let _ = h.emit("file-dropped", &file_paths[0]);
+                        } else {
+                            let _ = h.emit("files-dropped", file_paths);
                         }
                     }
                 });
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![check_node, pick_file, export_pdf])
+        .invoke_handler(tauri::generate_handler![read_file, write_temp_html, check_node, pick_file, pick_files, export_pdf])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
