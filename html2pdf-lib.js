@@ -163,9 +163,11 @@ async function exportPage(browser, input, output, options = {}) {
       // Use the wrapper's actual left offset, falling back to center
       const offsetX = pageMetrics.wrapperX || Math.round((pageMetrics.width - cropW) / 2);
       for (const p of pages) {
-        const { height } = p.getSize();
-        p.setCropBox(offsetX, 0, offsetX + cropW, height);
-        p.setMediaBox(offsetX, 0, offsetX + cropW, height);
+        // Shift content left by offsetX so it starts at x=0,
+        // then set the page dimensions to the cropped width.
+        p.translateContent(-offsetX, 0);
+        p.setMediaBox(0, 0, cropW, p.getSize().height);
+        p.setCropBox(0, 0, cropW, p.getSize().height);
       }
       fs.writeFileSync(output, await cropDoc.save());
     }
