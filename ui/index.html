@@ -104,7 +104,7 @@ body {
 .interaction-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
 .interaction-toggle input { cursor: pointer; }
 .preview-scale-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-left: auto; }
-.preview-frame-wrap { flex: 1; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 12px; }
+.preview-frame-wrap { flex: 1; overflow: hidden; display: flex; justify-content: center; align-items: flex-start; padding: 12px; }
 .preview-frame { border: none; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15); transform-origin: top center; }
 .interaction-active { outline: 2px solid var(--warning); outline-offset: 2px; }
 
@@ -160,7 +160,6 @@ body {
       <div class="card-header">导出设置</div>
       <div class="settings-grid">
         <div class="setting"><label>视口宽度 <span id="viewportHint" style="font-weight:400;color:var(--accent);"></span></label><input type="number" id="viewportWidth" value="1280" min="320" max="5120" step="10"><span class="setting-unit">px</span></div>
-        <div class="setting"><label>缩放比例</label><input type="number" id="scale" value="1" min="0.25" max="4" step="0.05"><span class="setting-unit">0.5-4x</span></div>
         <div class="setting"><label>页面宽度</label><input type="text" id="pdfWidth" placeholder="自动"><span class="setting-unit">留空=自动</span></div>
         <div class="setting"><label>页面高度</label><input type="text" id="pdfHeight" placeholder="单页自适应"><span class="setting-unit">留空=单页</span></div>
       </div>
@@ -169,6 +168,11 @@ body {
     <div class="card">
       <div class="card-header" id="advancedToggle" style="cursor:pointer;user-select:none;">高级选项 <span style="font-weight:400;margin-left:4px;">▸</span></div>
       <div id="advancedBody" style="display:none;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.3px;">输出</div>
+        <div class="settings-grid">
+          <div class="setting"><label>输出缩放</label><input type="number" id="scale" value="1" min="0.25" max="4" step="0.05"><span class="setting-unit">PDF 整体缩放倍数</span></div>
+        </div>
+
         <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.3px;">水印</div>
         <div class="settings-grid">
           <div class="setting"><label>水印文字</label><input type="text" id="watermarkText" placeholder="留空=无水印"></div>
@@ -256,7 +260,12 @@ async function loadPreview(input, firstLoad) {
       const dir = input.replace(/[^\\/]+$/, '');
       let html = await window.__TAURI__.core.invoke('read_file', { path: input });
 
-      // Use DOM to find all relative images, then embed as base64
+      // 1. Inject viewport meta — string operation, no parser
+      const vw = parseInt($('#viewportWidth').value) || 1280;
+      html = html.replace(/(<head[^>]*>)/i, `$1\n<meta name="viewport" content="width=${vw}, initial-scale=1">`);
+
+      // 2. Process images: DOM parser only for extracting img srcs,
+      //    then replace back into the ORIGINAL html string
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       const imgs = doc.querySelectorAll('img[src]');
@@ -267,20 +276,22 @@ async function loadPreview(input, firstLoad) {
           const fullPath = dir + src.replace(/\//g, '\\');
           const b64 = await window.__TAURI__.core.invoke('read_file_base64', { path: fullPath });
           const ext = (src.split('.').pop() || 'png').toLowerCase();
-          const mime = { jpg: 'jpeg', jpeg: 'jpeg', png: 'png', gif: 'gif', webp: 'webp', svg: 'svg+xml', bmp: 'bmp' }[ext] || 'png';
-          img.setAttribute('src', `data:image/${mime};base64,${b64}`);
-        } catch(e) { /* image file not found — leave original src */ }
+          const mime = { jpg:'jpeg',jpeg:'jpeg',png:'png',gif:'gif',webp:'webp',svg:'svg+xml',bmp:'bmp' }[ext]||'png';
+          // Escape special regex chars in src
+          const escaped = src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          html = html.replace(new RegExp(`src=["']${escaped}["']`, 'g'),
+            `src="data:image/${mime};base64,${b64}"`);
+        } catch(e) {}
       }
-      html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+
+      // 3. Convert CSS url() relative paths to file:///
+      html = html.replace(/url\(["']?(?!https?:\/\/|data:|file:\/\/)([^"')]+)["']?\)/gi,
+        (_, url) => `url("file:///${dir.replace(/\\/g, '/')}${url}")`);
 
       if (firstLoad) {
         const w = detectContentWidth(html);
         if (w) { detectedViewport = w; $('#viewportWidth').value = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
       }
-
-      // Convert relative CSS url() references to absolute file:///
-      html = html.replace(/url\(["']?(?!https?:\/\/|data:|file:\/\/)([^"')]+)["']?\)/gi,
-        (_, url) => `url("file:///${dir.replace(/\\/g, '/')}${url}")`);
 
       const blob = new Blob([html], { type: 'text/html' });
       $('#previewFrame').src = URL.createObjectURL(blob);
@@ -301,15 +312,13 @@ function updatePreviewScale() {
   const wrap = $('#previewWrap');
   const frame = $('#previewFrame');
   const vw = parseInt($('#viewportWidth').value) || 1280;
-  const userScale = parseFloat($('#scale').value) || 1;
   const availW = wrap.clientWidth - 24;
-  // Render iframe at viewport width, scale uniformly to fit panel width
   frame.style.width = vw + 'px';
-  const ratio = availW / (vw * userScale);
-  frame.style.transform = `scale(${Math.min(1, ratio)})`;
+  const ratio = Math.min(1, availW / vw);
+  frame.style.transform = `scale(${ratio})`;
   frame.style.transformOrigin = 'top left';
-  frame.style.height = Math.round(wrap.clientHeight / Math.min(1, ratio)) + 'px';
-  $('#previewScale').textContent = ratio < 1 ? `${vw}px @ ${Math.round(Math.min(1,ratio)*100)}%` : `${vw}px (1:1)`;
+  frame.style.height = Math.round(wrap.clientHeight / ratio) + 'px';
+  $('#previewScale').textContent = ratio < 1 ? `${vw}px @ ${Math.round(ratio*100)}%` : `${vw}px (1:1)`;
 }
 
 function refreshPreview() {
@@ -320,7 +329,7 @@ function refreshPreview() {
   }, 300);
 }
 
-['#viewportWidth','#scale'].forEach(id => $(id).addEventListener('input', refreshPreview));
+$('#viewportWidth').addEventListener('input', refreshPreview);
 window.addEventListener('resize', updatePreviewScale);
 
 // --- Interaction mode ---
