@@ -37,7 +37,9 @@ body {
 
 /* Split layout */
 .app-split { display: flex; height: 100vh; }
-.panel-left { width: 440px; min-width: 380px; overflow-y: auto; padding: 24px 20px 80px; display: flex; flex-direction: column; gap: 16px; border-right: 1px solid var(--border); background: var(--bg); }
+.panel-left { width: 440px; min-width: 320px; overflow-y: auto; padding: 24px 20px 80px; display: flex; flex-direction: column; gap: 16px; background: var(--bg); }
+.divider { width: 4px; cursor: col-resize; background: var(--border); flex-shrink: 0; transition: background 150ms; }
+.divider:hover, .divider.dragging { background: var(--accent); }
 .panel-right { flex: 1; min-width: 400px; display: flex; flex-direction: column; background: #e2e8f0; }
 
 /* Header */
@@ -157,7 +159,7 @@ body {
     <div class="card">
       <div class="card-header">导出设置</div>
       <div class="settings-grid">
-        <div class="setting"><label>视口宽度</label><input type="number" id="viewportWidth" value="1280" min="320" max="5120" step="10"><span class="setting-unit">px</span></div>
+        <div class="setting"><label>视口宽度 <span id="viewportHint" style="font-weight:400;color:var(--accent);"></span></label><input type="number" id="viewportWidth" value="1280" min="320" max="5120" step="10"><span class="setting-unit">px</span></div>
         <div class="setting"><label>缩放比例</label><input type="number" id="scale" value="1" min="0.25" max="4" step="0.05"><span class="setting-unit">0.5-4x</span></div>
         <div class="setting"><label>页面宽度</label><input type="text" id="pdfWidth" placeholder="自动"><span class="setting-unit">留空=自动</span></div>
         <div class="setting"><label>页面高度</label><input type="text" id="pdfHeight" placeholder="单页自适应"><span class="setting-unit">留空=单页</span></div>
@@ -201,6 +203,8 @@ body {
     <div class="footer">Powered by Chromium · 矢量 PDF</div>
   </div>
 
+  <div class="divider" id="divider"></div>
+
   <!-- Right Panel - Preview -->
   <div class="panel-right">
     <div class="preview-toolbar">
@@ -224,9 +228,23 @@ const $$ = s => document.querySelectorAll(s);
 let selectedFile = null;
 let previewDebounce = null;
 let interactionMode = false;
+let detectedViewport = null;  // one-time detection per file
+
+// --- Divider drag ---
+const divider = $('#divider');
+const leftPanel = $('.panel-left');
+let dragging = false;
+divider.addEventListener('mousedown', e => { dragging = true; divider.classList.add('dragging'); e.preventDefault(); });
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const w = Math.max(320, Math.min(600, e.clientX));
+  leftPanel.style.width = w + 'px';
+  updatePreviewScale();
+});
+document.addEventListener('mouseup', () => { dragging = false; divider.classList.remove('dragging'); });
 
 // --- Preview ---
-async function loadPreview(input) {
+async function loadPreview(input, firstLoad) {
   if (!input) { $('#previewFrame').src = 'about:blank'; return; }
   const vw = parseInt($('#viewportWidth').value) || 1280;
   const sc = parseFloat($('#scale').value) || 1;
@@ -238,12 +256,11 @@ async function loadPreview(input) {
     $('#interactionMode').disabled = false;
     try {
       const html = await window.__TAURI__.core.invoke('read_file', { path: input });
-      const detectedW = detectContentWidth(html);
-      if (detectedW && detectedW > 0) {
-        $('#viewportWidth').value = detectedW;
-        $('#exportHint').textContent = `检测到页面宽度: ${detectedW}px`;
+      if (firstLoad) {
+        const w = detectContentWidth(html);
+        if (w) { detectedViewport = w; $('#viewportWidth').value = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
       }
-      const useW = detectedW || vw;
+      const useW = detectedViewport || vw;
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       let meta = doc.querySelector('meta[name="viewport"]');
@@ -251,19 +268,16 @@ async function loadPreview(input) {
       meta.content = `width=${useW}, initial-scale=${sc}`;
       const blob = new Blob(['<!DOCTYPE html>\n' + doc.documentElement.outerHTML], { type: 'text/html' });
       $('#previewFrame').src = URL.createObjectURL(blob);
-    } catch(e) { /* file read failed */ }
+    } catch(e) {}
   }
   updatePreviewScale();
 }
 
 function detectContentWidth(html) {
-  // Try to extract the page's designed width from CSS rules
   const bodyMatch = html.match(/body\s*\{[^}]*max-width\s*:\s*(\d+)px/i);
   if (bodyMatch) return parseInt(bodyMatch[1]);
   const pageMatch = html.match(/\.page\s*\{[^}]*width\s*:\s*(\d+)px/i);
   if (pageMatch) return parseInt(pageMatch[1]);
-  const wrapperMatch = html.match(/(?:\.container|\.wrapper|\.main|main)\s*\{[^}]*width\s*:\s*(\d+)px/i);
-  if (wrapperMatch) return parseInt(wrapperMatch[1]);
   return null;
 }
 
@@ -271,15 +285,20 @@ function updatePreviewScale() {
   const wrap = $('#previewWrap');
   const frame = $('#previewFrame');
   const availW = wrap.clientWidth - 24;
-  frame.style.width = availW + 'px';
-  frame.style.transform = 'scale(1)';
-  $('#previewScale').textContent = `${availW}px (1:1)`;
+  const vw = parseInt($('#viewportWidth').value) || 1280;
+  // Match iframe height to panel, preserving aspect ratio from viewport
+  const ratio = availW / vw;
+  frame.style.width = vw + 'px';
+  frame.style.height = (ratio > 0.5 ? '100%' : Math.round(wrap.clientHeight / ratio) + 'px');
+  frame.style.transform = ratio < 0.9 ? `scale(${ratio})` : 'scale(1)';
+  frame.style.transformOrigin = 'top left';
+  $('#previewScale').textContent = ratio < 0.9 ? `${vw}px @ ${Math.round(ratio*100)}%` : `${availW}px (1:1)`;
 }
 
 function refreshPreview() {
   clearTimeout(previewDebounce);
   previewDebounce = setTimeout(() => {
-    if (selectedFile && !/^https?:\/\//i.test(selectedFile)) loadPreview(selectedFile);
+    if (selectedFile && !/^https?:\/\//i.test(selectedFile)) loadPreview(selectedFile, false);
     updatePreviewScale();
   }, 300);
 }
@@ -294,7 +313,7 @@ $('#interactionMode').addEventListener('change', () => {
   if (interactionMode) {
     frame.style.pointerEvents = 'auto';
     frame.classList.add('interaction-active');
-    if (selectedFile && !/^https?:\/\//i.test(selectedFile)) loadPreview(selectedFile);
+    if (selectedFile && !/^https?:\/\//i.test(selectedFile)) detectedViewport = null; $('#viewportHint').textContent = ''; loadPreview(selectedFile, true);
   } else {
     frame.style.pointerEvents = 'none';
     frame.classList.remove('interaction-active');
@@ -321,7 +340,7 @@ $$('.tab').forEach(tab => tab.addEventListener('click', () => {
 // --- File selection ---
 const dropZone = $('#dropZone');
 dropZone.addEventListener('click', async () => {
-  try { selectedFile = await window.__TAURI__.core.invoke('pick_file'); updateExportState(); loadPreview(selectedFile); } catch(e){}
+  try { selectedFile = await window.__TAURI__.core.invoke('pick_file'); updateExportState(); detectedViewport = null; $('#viewportHint').textContent = ''; loadPreview(selectedFile, true); } catch(e){}
 });
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
@@ -329,7 +348,7 @@ dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.
 
 if (window.__TAURI__?.event) {
   window.__TAURI__.event.listen('file-dropped', e => {
-    selectedFile = e.payload; updateExportState(); loadPreview(selectedFile);
+    selectedFile = e.payload; updateExportState(); detectedViewport = null; $('#viewportHint').textContent = ''; loadPreview(selectedFile, true);
   });
 }
 
