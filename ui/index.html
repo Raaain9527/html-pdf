@@ -84,7 +84,7 @@ body {
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .setting { display: flex; flex-direction: column; gap: 2px; }
 .setting label { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; }
-.setting input { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; font-family: var(--mono); color: var(--text); background: #f8fafc; outline: none; }
+.setting input { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; font-family: var(--mono); color: var(--text); background: #f8fafc; outline: none; }
 .setting input:focus { border-color: var(--accent); }
 .setting-unit { font-size: 10px; color: var(--text-muted); }
 
@@ -256,32 +256,30 @@ async function loadPreview(input, firstLoad) {
       const dir = input.replace(/[^\\/]+$/, '');
       let html = await window.__TAURI__.core.invoke('read_file', { path: input });
 
-      // Convert relative img src to base64 data URIs so they work in a blob URL
-      const imgRe = /<img[^>]+src=["'](?!https?:\/\/|data:)([^"']+)["'][^>]*>/gi;
-      const replacements = [];
-      html = html.replace(imgRe, (match, src) => {
-        const fullPath = dir + src.replace(/\//g, '\\');
-        replacements.push({ match, src, fullPath });
-        return match; // keep original, replace below
-      });
-
-      for (const r of replacements) {
+      // Use DOM to find all relative images, then embed as base64
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const imgs = doc.querySelectorAll('img[src]');
+      for (const img of imgs) {
+        const src = img.getAttribute('src');
+        if (!src || /^https?:\/\//i.test(src) || /^data:/i.test(src)) continue;
         try {
-          const imgB64 = await window.__TAURI__.core.invoke('read_file_base64', { path: r.fullPath });
-          const ext = (r.src.split('.').pop() || 'png').toLowerCase();
-          const mime = { jpg: 'jpeg', jpeg: 'jpeg', png: 'png', gif: 'gif', webp: 'webp', svg: 'svg+xml' }[ext] || 'png';
-          html = html.replace('src="' + r.src + '"', `src="data:image/${mime};base64,${imgB64}"`);
-          html = html.replace("src='" + r.src + "'", `src='data:image/${mime};base64,${imgB64}'`);
-        } catch(e) {}
+          const fullPath = dir + src.replace(/\//g, '\\');
+          const b64 = await window.__TAURI__.core.invoke('read_file_base64', { path: fullPath });
+          const ext = (src.split('.').pop() || 'png').toLowerCase();
+          const mime = { jpg: 'jpeg', jpeg: 'jpeg', png: 'png', gif: 'gif', webp: 'webp', svg: 'svg+xml', bmp: 'bmp' }[ext] || 'png';
+          img.setAttribute('src', `data:image/${mime};base64,${b64}`);
+        } catch(e) { /* image file not found — leave original src */ }
       }
+      html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
 
       if (firstLoad) {
         const w = detectContentWidth(html);
         if (w) { detectedViewport = w; $('#viewportWidth').value = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
       }
 
-      // Also convert relative CSS url() references to absolute file:///
-      html = html.replace(/url\(["']?(?!https?:\/\/|data:)([^"')]+)["']?\)/gi,
+      // Convert relative CSS url() references to absolute file:///
+      html = html.replace(/url\(["']?(?!https?:\/\/|data:|file:\/\/)([^"')]+)["']?\)/gi,
         (_, url) => `url("file:///${dir.replace(/\\/g, '/')}${url}")`);
 
       const blob = new Blob([html], { type: 'text/html' });
@@ -302,15 +300,16 @@ function detectContentWidth(html) {
 function updatePreviewScale() {
   const wrap = $('#previewWrap');
   const frame = $('#previewFrame');
-  const availW = wrap.clientWidth - 24;
   const vw = parseInt($('#viewportWidth').value) || 1280;
-  // Match iframe height to panel, preserving aspect ratio from viewport
-  const ratio = availW / vw;
+  const userScale = parseFloat($('#scale').value) || 1;
+  const availW = wrap.clientWidth - 24;
+  // Render iframe at viewport width, scale uniformly to fit panel width
   frame.style.width = vw + 'px';
-  frame.style.height = (ratio > 0.5 ? '100%' : Math.round(wrap.clientHeight / ratio) + 'px');
-  frame.style.transform = ratio < 0.9 ? `scale(${ratio})` : 'scale(1)';
+  const ratio = availW / (vw * userScale);
+  frame.style.transform = `scale(${Math.min(1, ratio)})`;
   frame.style.transformOrigin = 'top left';
-  $('#previewScale').textContent = ratio < 0.9 ? `${vw}px @ ${Math.round(ratio*100)}%` : `${availW}px (1:1)`;
+  frame.style.height = Math.round(wrap.clientHeight / Math.min(1, ratio)) + 'px';
+  $('#previewScale').textContent = ratio < 1 ? `${vw}px @ ${Math.round(Math.min(1,ratio)*100)}%` : `${vw}px (1:1)`;
 }
 
 function refreshPreview() {
