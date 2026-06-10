@@ -68,6 +68,13 @@ fn node_exe_path() -> String {
 }
 
 #[tauri::command]
+fn read_file_base64(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+#[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))
 }
@@ -251,7 +258,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_file, write_temp_html, check_node, pick_file, pick_files, export_pdf])
+        .invoke_handler(tauri::generate_handler![read_file, read_file_base64, write_temp_html, check_node, pick_file, pick_files, export_pdf])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

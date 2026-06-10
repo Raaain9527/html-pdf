@@ -252,17 +252,41 @@ async function loadPreview(input, firstLoad) {
     $('#interactionMode').disabled = true;
   } else {
     $('#interactionMode').disabled = false;
-    // Load file directly — preserves relative paths for images/CSS
-    const fileUrl = 'file:///' + input.replace(/\\/g, '/').replace(/^\/+/, '');
-    $('#previewFrame').src = fileUrl;
+    try {
+      const dir = input.replace(/[^\\/]+$/, '');
+      let html = await window.__TAURI__.core.invoke('read_file', { path: input });
 
-    if (firstLoad) {
-      try {
-        const html = await window.__TAURI__.core.invoke('read_file', { path: input });
+      // Convert relative img src to base64 data URIs so they work in a blob URL
+      const imgRe = /<img[^>]+src=["'](?!https?:\/\/|data:)([^"']+)["'][^>]*>/gi;
+      const replacements = [];
+      html = html.replace(imgRe, (match, src) => {
+        const fullPath = dir + src.replace(/\//g, '\\');
+        replacements.push({ match, src, fullPath });
+        return match; // keep original, replace below
+      });
+
+      for (const r of replacements) {
+        try {
+          const imgB64 = await window.__TAURI__.core.invoke('read_file_base64', { path: r.fullPath });
+          const ext = (r.src.split('.').pop() || 'png').toLowerCase();
+          const mime = { jpg: 'jpeg', jpeg: 'jpeg', png: 'png', gif: 'gif', webp: 'webp', svg: 'svg+xml' }[ext] || 'png';
+          html = html.replace('src="' + r.src + '"', `src="data:image/${mime};base64,${imgB64}"`);
+          html = html.replace("src='" + r.src + "'", `src='data:image/${mime};base64,${imgB64}'`);
+        } catch(e) {}
+      }
+
+      if (firstLoad) {
         const w = detectContentWidth(html);
         if (w) { detectedViewport = w; $('#viewportWidth').value = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
-      } catch(e) {}
-    }
+      }
+
+      // Also convert relative CSS url() references to absolute file:///
+      html = html.replace(/url\(["']?(?!https?:\/\/|data:)([^"')]+)["']?\)/gi,
+        (_, url) => `url("file:///${dir.replace(/\\/g, '/')}${url}")`);
+
+      const blob = new Blob([html], { type: 'text/html' });
+      $('#previewFrame').src = URL.createObjectURL(blob);
+    } catch(e) { console.error(e); }
   }
   updatePreviewScale();
 }
