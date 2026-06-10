@@ -46,10 +46,11 @@
 |------|------|------|--------|
 | P1 | **实时预览** | 导出前渲染预览，视口宽度/缩放等参数变化时预览实时更新 | **P0** |
 | P2 | **交互式导出** | 支持在预览中点击页面元素（展开折叠区、切换标签等）后再导出，而非仅导出默认 HTML 状态 | **P0** |
-| P3 | Chrome 直调模式 | Rust 直接调用 Chrome `--headless --print-to-pdf`，移除 Node.js 依赖 | P2 |
-| P4 | PDF 书签 | 根据 HTML h1-h6 自动生成 PDF 目录大纲 | P3 |
-| P5 | 图片水印 | 支持 PNG/JPEG 图片作为水印 | P3 |
-| P6 | macOS 支持 | 适配 macOS 桌面端 | P3 |
+| P3 | **多文件上传** | 桌面端和 Web 端支持一次选择多个 HTML 文件，批量导出，每个文件默认以原文件名命名 PDF | **P0** |
+| P4 | Chrome 直调模式 | Rust 直接调用 Chrome `--headless --print-to-pdf`，移除 Node.js 依赖 | P2 |
+| P5 | PDF 书签 | 根据 HTML h1-h6 自动生成 PDF 目录大纲 | P3 |
+| P6 | 图片水印 | 支持 PNG/JPEG 图片作为水印 | P3 |
+| P7 | macOS 支持 | 适配 macOS 桌面端 | P3 |
 
 ---
 
