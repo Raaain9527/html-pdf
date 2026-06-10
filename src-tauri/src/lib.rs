@@ -13,6 +13,32 @@ fn hidden_cmd(program: &str) -> Command {
     cmd
 }
 
+fn find_project_root() -> std::path::PathBuf {
+    // Try to find project root relative to the exe at runtime.
+    // This is more robust than CARGO_MANIFEST_DIR (compile-time path).
+    if let Ok(exe) = std::env::current_exe() {
+        // exe is in src-tauri/target/release/html-pdf.exe
+        // Go up 3 levels to project root
+        if let Some(root) = exe.parent() // release
+            .and_then(|p| p.parent())    // target
+            .and_then(|p| p.parent())    // src-tauri
+            .and_then(|p| p.parent())    // project root
+        {
+            let script = root.join("html2pdf.js");
+            if script.exists() {
+                return root.to_path_buf();
+            }
+        }
+    }
+    // Fallback: CARGO_MANIFEST_DIR compile-time path
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    if root.join("html2pdf.js").exists() {
+        return root;
+    }
+    // Last resort: current directory
+    std::env::current_dir().unwrap_or(root)
+}
+
 fn node_exe_path() -> String {
     // Priority: bundled portable Node.js, then system Node.js
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -90,10 +116,12 @@ fn export_pdf(app: tauri::AppHandle, input: String, options: String) -> Result<S
     };
 
     // Run export
-    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let project_root = find_project_root();
+    let script_path = project_root.join("html2pdf.js");
+
     let mut cmd = hidden_cmd(&node_exe_path());
-    cmd.current_dir(project_root)
-        .arg(project_root.join("html2pdf.js"))
+    cmd.current_dir(&project_root)
+        .arg(&script_path)
         .arg(&input)
         .arg("-o")
         .arg(&output_path);
