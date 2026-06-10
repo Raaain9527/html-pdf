@@ -159,7 +159,7 @@ body {
     <div class="card">
       <div class="card-header">导出设置</div>
       <div class="settings-grid">
-        <div class="setting"><label>视口宽度 <span id="viewportHint" style="font-weight:400;color:var(--accent);"></span></label><input type="number" id="viewportWidth" value="1280" min="320" max="5120" step="10"><span class="setting-unit">px</span></div>
+        <div class="setting"><label>视口宽度 <span id="viewportHint" style="font-weight:400;color:var(--accent);"></span></label><input type="number" id="viewportWidth" value="1440" min="320" max="5120" step="10"><span class="setting-unit">px</span></div>
         <div class="setting"><label>页面宽度</label><input type="text" id="pdfWidth" placeholder="自动"><span class="setting-unit">留空=自动</span></div>
         <div class="setting"><label>页面高度</label><input type="text" id="pdfHeight" placeholder="单页自适应"><span class="setting-unit">留空=单页</span></div>
       </div>
@@ -259,6 +259,8 @@ async function loadPreview(input, firstLoad) {
     try {
       const dir = input.replace(/[^\\/]+$/, '');
       let html = await window.__TAURI__.core.invoke('read_file', { path: input });
+      const vw = parseInt($('#viewportWidth').value) || 1440;
+      html = html.replace(/(<head[^>]*>)/i, `$1\n<meta name="viewport" content="width=${vw}, initial-scale=1">`);
 
       // Embed relative images as base64 (blob URLs lose directory context)
       const parser = new DOMParser();
