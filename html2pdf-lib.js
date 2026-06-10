@@ -97,26 +97,28 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.overflow = 'visible';
       html.style.height = 'auto';
 
-      // Detect actual content width: find the rightmost edge of body's
-      // direct children. This handles centered fixed-width wrappers (common
-      // in resumes) instead of blindly using the full viewport width.
+      // Detect fixed-width content layout: check both body itself (for
+      // `body { max-width: 800px; margin: 0 auto }`) and direct children
+      // (for `.page { width: 860px; margin: 0 auto }` inside a full-width
+      // body). Pick the widest fixed-width element as the content boundary.
       let contentWidth = html.clientWidth;
       if (body) {
-        let maxRight = 0;
+        let fixedWidth = 0;
+        const bodyRect = body.getBoundingClientRect();
+        // Check body itself first
+        if (bodyRect.width < html.clientWidth * 0.95) {
+          fixedWidth = Math.ceil(bodyRect.width);
+        }
+        // Also check direct children (wrappers inside full-width body)
         for (const child of body.children) {
           const r = child.getBoundingClientRect();
-          // Skip full-width elements (they stretch to viewport)
-          if (r.width < html.clientWidth * 0.95) {
-            maxRight = Math.max(maxRight, r.right);
+          if (r.width < html.clientWidth * 0.95 && r.width > 100) {
+            fixedWidth = Math.max(fixedWidth, Math.ceil(r.width));
           }
         }
-        if (maxRight > 0) {
-          // Add body's left padding so the content isn't clipped on the left
-          const bodyStyle = window.getComputedStyle(body);
-          const padLeft = parseFloat(bodyStyle.paddingLeft) || 0;
-          contentWidth = Math.ceil(maxRight + padLeft);
+        if (fixedWidth > 0) {
+          contentWidth = fixedWidth;
         } else {
-          const bodyRect = body.getBoundingClientRect();
           contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
         }
       }
@@ -135,6 +137,13 @@ async function exportPage(browser, input, output, options = {}) {
 
     const pdfWidth = options.width || `${pageMetrics.width}px`;
     const pdfHeight = options.height || `${pageMetrics.height}px`;
+
+    // If a fixed-width content wrapper was detected, shrink the viewport
+    // to match so the PDF page has no extra white margins
+    if (!options.width && pageMetrics.width !== vpWidth) {
+      await page.setViewport({ width: pageMetrics.width, height: 900, deviceScaleFactor: 2 });
+      await new Promise(r => setTimeout(r, 300));
+    }
 
     await page.pdf({
       path: output,
