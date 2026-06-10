@@ -194,6 +194,27 @@
 3. **Phase 3**（P2 基础）：交互模式开关 + DOM 捕获 + 临时文件写入 + 页面内交互后导出
 4. **Phase 4**（P2 完善）：CSS 状态锁定、Web 端 `page.setContent()` 支持、边界情况处理
 
+### 3.5 预览技术方案对比
+
+当前 P1 实时预览采用「Blob URL + viewport 注入 + transform 缩放」方案，存在以下固有问题：
+- Blob URL 脱离原文件目录，相对路径资源（图片、CSS）需 base64 转码或路径改写
+- viewport meta 注入依赖正则匹配 HTML 字符串，HTML 注释中的 meta 会导致误匹配
+- CSS transform 缩放产生双重滚动条、布局空间与实际内容不匹配
+- 每次视口变化需重新读文件重建 Blob
+
+以下是六种备选方案的兼容性评估：
+
+| | A: Blob+注入 (当前) | B: 新WebView | C: HTTP服务器 | D: srcdoc | E: Puppeteer | F: 内嵌服务 |
+|------|------|------|------|------|------|------|
+| 图片/CSS路径 | ⚠ 需转码 | ✅ | ✅ | ❌ | ✅ | ✅ |
+| 视口响应 | ⚠ 重建blob | ✅ eval | ✅ postMsg | N/A | ❌ 截图 | ✅ postMsg |
+| HTML完整性 | ⚠ 字符串改 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 交互模式 | ✅ | ⚠ 双窗口 | ✅ | ❌ | ❌ | ❌ |
+| 新增依赖 | 无 | 无 | tiny_http | 无 | Puppeteer | 无 |
+| 实施复杂度 | 已实现 | 中 | 低 | 已淘汰 | 高 | 低 |
+
+**选定方案 C**：Rust 内嵌 HTTP 静态文件服务器（`tiny_http`），对外暴露 HTML 所在目录。iframe 通过 `http://127.0.0.1:PORT/` 加载，所有资源路径天然正确。视口变化通过 `postMessage` 通知 iframe 调整。不碰 HTML 内容。
+
 ## 4. 技术方案
 
 | 组件 | 技术 | 说明 |
@@ -204,6 +225,7 @@
 | Web 服务 | Express | 浏览器端上传/导出 |
 | CLI | Commander + puppeteer-core | 命令行批量导出 |
 | 字体 | @pdf-lib/fontkit | 中文字体嵌入（SimHei） |
+| 预览服务 | tiny_http (Rust) | 本地 HTTP 静态文件服务，解决 iframe 资源路径问题 |
 
 ## 5. 架构
 
