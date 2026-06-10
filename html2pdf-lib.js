@@ -97,30 +97,15 @@ async function exportPage(browser, input, output, options = {}) {
       html.style.overflow = 'visible';
       html.style.height = 'auto';
 
-      // Detect fixed-width content layout: check both body itself (for
-      // `body { max-width: 800px; margin: 0 auto }`) and direct children
-      // (for `.page { width: 860px; margin: 0 auto }` inside a full-width
-      // body). Pick the widest fixed-width element as the content boundary.
+      // Use viewport width as the PDF page width. The content may have a
+      // fixed-width wrapper (like `.page { width: 860px }`) centered in a
+      // wider body — but the PDF captures from (0,0), so using the wrapper
+      // width would clip the right side. Keep the full viewport width.
+      // Users who want exact content width can set `--width` manually.
       let contentWidth = html.clientWidth;
       if (body) {
-        let fixedWidth = 0;
         const bodyRect = body.getBoundingClientRect();
-        // Check body itself first
-        if (bodyRect.width < html.clientWidth * 0.95) {
-          fixedWidth = Math.ceil(bodyRect.width);
-        }
-        // Also check direct children (wrappers inside full-width body)
-        for (const child of body.children) {
-          const r = child.getBoundingClientRect();
-          if (r.width < html.clientWidth * 0.95 && r.width > 100) {
-            fixedWidth = Math.max(fixedWidth, Math.ceil(r.width));
-          }
-        }
-        if (fixedWidth > 0) {
-          contentWidth = fixedWidth;
-        } else {
-          contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
-        }
+        contentWidth = Math.ceil(Math.max(bodyRect.width, bodyRect.right));
       }
 
       const scrollHeight = Math.max(
