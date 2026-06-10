@@ -248,8 +248,6 @@ document.addEventListener('mousemove', e => {
 document.addEventListener('mouseup', () => { dragging = false; divider.classList.remove('dragging'); });
 
 // --- Preview ---
-let previewServerUrl = null;
-
 async function loadPreview(input, firstLoad) {
   if (!input) { $('#previewFrame').src = 'about:blank'; return; }
 
@@ -259,24 +257,41 @@ async function loadPreview(input, firstLoad) {
   } else {
     $('#interactionMode').disabled = false;
     try {
-      previewServerUrl = await window.__TAURI__.core.invoke('start_preview_server', { path: input });
-      $('#previewFrame').src = previewServerUrl;
+      const dir = input.replace(/[^\\/]+$/, '');
+      let html = await window.__TAURI__.core.invoke('read_file', { path: input });
+
+      // Embed relative images as base64 (blob URLs lose directory context)
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const imgs = doc.querySelectorAll('img[src]');
+      for (const img of imgs) {
+        const src = img.getAttribute('src');
+        if (!src || /^https?:\/\//i.test(src) || /^data:/i.test(src)) continue;
+        const fullPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : dir + src.replace(/\//g, '\\');
+        try {
+          const b64 = await window.__TAURI__.core.invoke('read_file_base64', { path: fullPath });
+          const ext = (src.split('.').pop() || 'png').toLowerCase();
+          const mime = { jpg:'jpeg',jpeg:'jpeg',png:'png',gif:'gif',webp:'webp',svg:'svg+xml',bmp:'bmp' }[ext]||'png';
+          const escaped = src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          html = html.replace(new RegExp(`src=["']${escaped}["']`, 'g'),
+            `src="data:image/${mime};base64,${b64}"`);
+        } catch(e) {}
+      }
+
+      // Convert relative CSS url() to absolute
+      html = html.replace(/url\(["']?(?!https?:\/\/|data:|file:\/\/|#|[a-zA-Z]:)([^"')]+)["']?\)/gi,
+        (_, url) => `url("file:///${dir.replace(/\\/g, '/')}${url}")`);
+
       if (firstLoad) {
-        const html = await window.__TAURI__.core.invoke('read_file', { path: input });
         const w = detectContentWidth(html);
         if (w) { detectedViewport = w; $('#viewportWidth').value = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
       }
+
+      const blob = new Blob([html], { type: 'text/html' });
+      $('#previewFrame').src = URL.createObjectURL(blob);
     } catch(e) { console.error(e); }
   }
   updatePreviewScale();
-}
-
-function sendViewportToPreview() {
-  const frame = $('#previewFrame');
-  const vw = parseInt($('#viewportWidth').value) || 1280;
-  if (frame.contentWindow) {
-    frame.contentWindow.postMessage({ viewportWidth: vw }, '*');
-  }
 }
 
 function detectContentWidth(html) {
@@ -292,6 +307,7 @@ function updatePreviewScale() {
   const frame = $('#previewFrame');
   const vw = parseInt($('#viewportWidth').value) || 1280;
   const availW = wrap.clientWidth - 24;
+  // iframe CSS width directly controls rendering width — overrides viewport meta
   frame.style.width = vw + 'px';
   const ratio = Math.min(1, availW / vw);
   frame.style.transform = `scale(${ratio})`;
@@ -302,10 +318,7 @@ function updatePreviewScale() {
 
 function refreshPreview() {
   clearTimeout(previewDebounce);
-  previewDebounce = setTimeout(() => {
-    sendViewportToPreview();
-    updatePreviewScale();
-  }, 300);
+  previewDebounce = setTimeout(updatePreviewScale, 300);
 }
 
 $('#viewportWidth').addEventListener('input', refreshPreview);
@@ -318,7 +331,6 @@ $('#interactionMode').addEventListener('change', () => {
   if (interactionMode) {
     frame.style.pointerEvents = 'auto';
     frame.classList.add('interaction-active');
-    if (selectedFile && !/^https?:\/\//i.test(selectedFile) && previewServerUrl) { $('#previewFrame').src = previewServerUrl; }
   } else {
     frame.style.pointerEvents = 'none';
     frame.classList.remove('interaction-active');

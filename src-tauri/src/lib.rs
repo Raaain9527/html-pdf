@@ -16,7 +16,10 @@ fn start_preview_server(path: String) -> Result<String, String> {
     let port = listener.local_addr().map_err(|e| format!("获取端口失败: {}", e))?.port();
 
     std::thread::spawn(move || {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eprintln!("[preview] server started on port {}", port);
         for stream in listener.incoming().flatten() {
+            eprintln!("[preview] connection received");
             let mut reader = BufReader::new(&stream);
             let mut req_line = String::new();
             if reader.read_line(&mut req_line).is_err() { continue; }
@@ -24,8 +27,10 @@ fn start_preview_server(path: String) -> Result<String, String> {
             let req_path = req_line.split_whitespace().nth(1).unwrap_or("/");
             let req_path = percent_decode(req_path);
             let req_path = req_path.trim_start_matches('/');
+            eprintln!("[preview] request: {}", req_path);
 
             let full_path = if req_path.is_empty() { serve_dir.join(&file_name_clone) } else { serve_dir.join(req_path) };
+            eprintln!("[preview] serve: {}", full_path.display());
 
             let content_type = mime_type(&full_path);
             let mut response = String::new();
@@ -52,9 +57,12 @@ fn start_preview_server(path: String) -> Result<String, String> {
             use std::io::Write;
             let _ = (&stream).write_all(response.as_bytes());
         }
+        }));
     });
 
-    Ok(format!("http://127.0.0.1:{}/{}", port, file_name))
+    let url = format!("http://127.0.0.1:{}/{}", port, file_name);
+    eprintln!("[preview] serving: {}", url);
+    Ok(url)
 }
 
 fn percent_decode(s: &str) -> String {
