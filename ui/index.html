@@ -104,7 +104,7 @@ body {
 .interaction-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
 .interaction-toggle input { cursor: pointer; }
 .preview-scale-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-left: auto; }
-.preview-frame-wrap { flex: 1; overflow: hidden; display: flex; justify-content: center; align-items: flex-start; padding: 12px; }
+.preview-frame-wrap { flex: 1; overflow: auto; display: flex; justify-content: flex-start; align-items: flex-start; padding: 12px; }
 .preview-frame { border: none; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15); transform-origin: top center; }
 .interaction-active { outline: 2px solid var(--warning); outline-offset: 2px; }
 
@@ -305,17 +305,11 @@ function detectContentWidth(html) {
 }
 
 function updatePreviewScale() {
-  const wrap = $('#previewWrap');
   const frame = $('#previewFrame');
-  const vw = parseInt($('#viewportWidth').value) || 1280;
-  const availW = wrap.clientWidth - 24;
-  // iframe CSS width directly controls rendering width — overrides viewport meta
+  const vw = parseInt($('#viewportWidth').value) || 1680;
   frame.style.width = vw + 'px';
-  const ratio = Math.min(1, availW / vw);
-  frame.style.transform = `scale(${ratio})`;
-  frame.style.transformOrigin = 'top left';
-  frame.style.height = Math.round(wrap.clientHeight / ratio) + 'px';
-  $('#previewScale').textContent = ratio < 1 ? `${vw}px @ ${Math.round(ratio*100)}%` : `${vw}px (1:1)`;
+  frame.style.height = 'auto';
+  $('#previewScale').textContent = vw + 'px';
 }
 
 function refreshPreview() {
