@@ -70,12 +70,18 @@ npx tauri build
 
 ## 报告文档
 
-项目包含求职用的 AI 作品展示报告（凉屋游戏运营实习岗）：
+项目包含求职用的 AI 作品展示报告（凉屋游戏运营实习岗）。报告位于 `docs/reports/`，采用文件名后缀（_v1/_v2/_v3）版本管理，由 git 之外维护：
 
-- `AI作品展示报告_html-pdf_v3.md` — 当前最新运营版正文
-- `AI作品展示报告_html-pdf_框架规划_v3.md` — v3 框架
-- `AI作品展示报告_html-pdf_v1.md` — 技术版（含全部 3 个 Bug 细节、选型详述）
-- `AI作品展示报告_html-pdf_v2.md` — 废弃版（含编造内容，仅供参考）
+- `docs/reports/current/` — 当前有效版：
+  - `AI作品展示报告_html-pdf_v3.md` — 最新运营版正文
+  - `AI作品展示报告_html-pdf_框架规划_v3.md` — v3 框架
+- `docs/reports/archive/` — 历史/派生版：
+  - `AI作品展示报告_html-pdf_v1.md` — 技术版（含全部 3 个 Bug 细节、选型详述）
+  - `AI作品展示报告_html-pdf_v2.md` — 废弃版（含编造内容，仅供参考）
+  - `AI作品展示报告_html-pdf.md` — 原版/全栈工程师版
+  - `AI作品展示报告_html-pdf_框架规划.md` / `_v1.md` — v1.0 框架（两份为副本）
+  - `AI作品展示报告_html-pdf_框架规划_v2.md` — 废弃框架
+  - `推文——AI作品展示报告_html-pdf_v1 1.md` + 两张截图 PNG（Obsidian 嵌入引用，须同目录）
 - `PRD.md` — 产品需求文档
 - `README.md` — 项目 README
 

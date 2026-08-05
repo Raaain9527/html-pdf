@@ -3,6 +3,7 @@ uploads/
 .claude/
 .obsidian/
 release/
+personal/
 *.tmp.pdf
 *.log
 米哈游-*.html
