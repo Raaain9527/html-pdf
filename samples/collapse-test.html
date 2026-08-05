@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>视口高度坍塌复现用例</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; }
+  .hero { height: 100vh; background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 700; }
+  .bar { height: 15vh; background: #f59e0b; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .content { min-height: 60vh; background: #f8fafc; padding: 40px; font-size: 16px; }
+</style>
+</head>
+<body>
+  <div class="hero">100vh Hero（导出视口 900 → 900px）</div>
+  <div class="bar">15vh Bar（导出视口 900 → 135px）</div>
+  <div class="content">min-height 60vh Content（导出视口 900 → ≥540px）</div>
+</body>
+</html>
