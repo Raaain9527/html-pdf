@@ -105,7 +105,9 @@ body {
 .interaction-toggle input { cursor: pointer; }
 .preview-scale-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-left: auto; }
 .preview-frame-wrap { flex: 1; overflow: auto; display: flex; justify-content: flex-start; align-items: flex-start; padding: 12px; }
-.preview-frame { border: none; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15); transform-origin: top center; }
+/* flex-shrink:0 关键 — 否则面板比视口窄时 iframe 被压缩, "浏览器视口"悄悄变小,
+   触发页面自身的响应式断点(如 @media max-width:920px)导致布局坍塌。须保持设定视口宽, 面板横向滚动。 */
+.preview-frame { flex-shrink: 0; border: none; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15); transform-origin: top center; }
 .interaction-active { outline: 2px solid var(--warning); outline-offset: 2px; }
 
 /* Footer */
@@ -216,7 +218,7 @@ body {
         <input type="checkbox" id="interactionMode"><span>交互模式</span>
       </label>
       <span style="font-size:11px;color:var(--text-muted);">开启后可点击页面元素</span>
-      <span class="preview-scale-label" id="previewScale">1280px @ 100%</span>
+      <span class="preview-scale-label" id="previewScale">1680×900px</span>
     </div>
     <div class="preview-frame-wrap" id="previewWrap">
       <iframe class="preview-frame" id="previewFrame"></iframe>
@@ -307,9 +309,13 @@ function detectContentWidth(html) {
 function updatePreviewScale() {
   const frame = $('#previewFrame');
   const vw = parseInt($('#viewportWidth').value) || 1680;
+  // 预览 iframe 高度必须等于导出视口高度 (html2pdf-lib.js:77 硬编码 900),
+  // 否则 vh / 百分比高度布局按 150px(默认) 解析 → 与导出(900)不一致 → 渲染坍塌。
+  // 副作用: 内容超过 900px 时在 iframe 内部滚动 (Phase 2 流式投影将取代此方案)。
+  const vh = 900;
   frame.style.width = vw + 'px';
-  frame.style.height = 'auto';
-  $('#previewScale').textContent = vw + 'px';
+  frame.style.height = vh + 'px';
+  $('#previewScale').textContent = vw + '×' + vh + 'px';
 }
 
 function refreshPreview() {
