@@ -59,7 +59,8 @@
 
 ## 实现记录（2026-08-06）
 
-- **daemon**：`preview-daemon.js`（项目根）——WebSocket 服务器(127.0.0.1:0)，stdout 首行 `LISTENING <port>`；持有 warm Puppeteer，CDP `Page.startScreencast` 推送 JPEG 帧；`open`/`input`/`capture`/`shutdown` 消息协议
+- **daemon**：`preview-daemon.js`（项目根）——WebSocket 服务器(127.0.0.1:0)，stdout 首行 `LISTENING <port>`；持有 warm Puppeteer；`open`/`input`/`capture`/`shutdown` 消息协议
+- **帧获取**：实测发现 `Page.startScreencast` 只按 CSS 视口输出（无视 DSF，maxWidth 只能缩小），无法提分辨率 → 改用 **`page.screenshot()` at `deviceScaleFactor:2`** 输出 视口×2（如 3360×1800），交互/滚动后防抖截图推送；`screenshot` 与鼠标事件经 daemon 协调（按住期间不截、mousedown 取消待执行截图）避免并发 CDP 干扰坐标派发（曾导致点击变成大范围拖选）
 - **Rust**：`lib.rs` `start_preview_daemon`/`stop_preview_daemon` 命令 + `DaemonState`（懒加载、退出清理）；删除了旧的 `start_preview_server` 死代码
 - **前端**：`ui/index.html` 预览区 iframe → canvas（接收帧流）；滚轮/鼠标/键盘输入转发（交互始终可用，移除"交互模式"开关）；导出经 daemon `capture` 取真实 DOM；`关闭 Node` 按钮（懒加载 + 可关闭）
 - **缩放**：fit 适配 + 1:1 + Ctrl+滚轮图像缩放（ADR 0002）
