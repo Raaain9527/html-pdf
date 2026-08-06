@@ -261,6 +261,7 @@ let zoomLevel = 1;
 let lastMoveAt = 0;
 let captureResolve = null;
 let frameImg = new Image();
+let lastSharpAt = 0; // 高清帧到达时间; 期间忽略 live 帧避免被软帧覆盖
 let viewportTouched = false; // 用户手动改过视口宽 → 不再自动适配
 let autoFitFile = null;      // 已自动适配过的文件, 防循环
 let fitPending = null;       // 断点感知自动适配的探测状态 {probe, target}
@@ -276,7 +277,8 @@ function sendToDaemon(obj) {
 }
 
 function drawFrame(b64) {
-  frameImg.onload = () => ctx.drawImage(frameImg, 0, 0);
+  // 拉伸填满缓冲: live 帧(视口 CSS 分辨率)与 sharp 帧(视口×SCALE)混合, 统一铺满画布
+  frameImg.onload = () => ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
   frameImg.src = 'data:image/jpeg;base64,' + b64;
 }
 
@@ -295,7 +297,11 @@ async function ensureDaemon() {
     previewWs.onerror = () => { setDaemonStatus('连接失败', 'error'); resolve(false); };
     previewWs.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'frame') drawFrame(m.data);
+      if (m.type === 'frame') {
+        // 高清优先: sharp 帧记时; 近期已显示高清帧则忽略迟到的 live 帧(避免被软帧覆盖), 新交互后恢复
+        if (m.sharp) { lastSharpAt = Date.now(); drawFrame(m.data); }
+        else if (!lastSharpAt || Date.now() - lastSharpAt > 400) drawFrame(m.data);
+      }
       else if (m.type === 'status') {
         if (m.state === 'error') setDaemonStatus('渲染错误: ' + (m.message || ''), 'error');
         else if (m.state === 'ready') {
@@ -386,12 +392,14 @@ canvas.addEventListener('mousemove', (e) => {
   // 按住期间抑制 <6px 的微小移动, 防止手抖把单击变拖选一大片文字; >6px 才转发(真拖动)
   if (mousePressed && downViewportPoint && Math.hypot(p.x - downViewportPoint.x, p.y - downViewportPoint.y) < 6) return;
   lastMoveAt = now;
+  lastSharpAt = 0; // 新交互 → 接受 live 帧
   sendToDaemon({ type: 'input', kind: 'mousemove', x: p.x, y: p.y });
 });
 canvas.addEventListener('mousedown', (e) => {
   const p = canvasToViewport(e);
   mousePressed = true;
   downViewportPoint = p;
+  lastSharpAt = 0;
   const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
   sendToDaemon({ type: 'input', kind: 'mousedown', x: p.x, y: p.y, button });
   canvas.focus();
@@ -400,11 +408,13 @@ canvas.addEventListener('mouseup', (e) => {
   const p = canvasToViewport(e);
   mousePressed = false;
   downViewportPoint = null;
+  lastSharpAt = 0;
   const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
   sendToDaemon({ type: 'input', kind: 'mouseup', x: p.x, y: p.y, button });
 });
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  lastSharpAt = 0;
   if (e.ctrlKey) { // Ctrl+滚轮 = 图像缩放 (ADR 0002)
     zoomMode = 'zoom';
     zoomLevel = Math.max(0.2, Math.min(4, zoomLevel * (e.deltaY < 0 ? 1.1 : 0.9)));

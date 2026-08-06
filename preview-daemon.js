@@ -26,6 +26,7 @@ const LOG = (...a) => console.error('[daemon]', ...a);
 
 let browser = null;
 let page = null;
+let cdp = null;          // 实时 screencast 的 CDP 会话 (ADR 0003)
 let screenshotTimer = null;
 
 // 投影栅格分辨率倍率：DSF 不影响布局/媒体查询/vh(都用 CSS px)，只影响栅格清晰度。
@@ -77,27 +78,45 @@ async function openPage(msg) {
     }, vw);
   } catch (e) {}
 
-  // 首帧 + ready。captureScreenshot 尊重 DSF → 输出 视口×SCALE 高分辨率帧。
-  await captureAndSend();
+  // ADR 0003 双通道: 启动实时 screencast (低分辨率顺滑, 运动时), 再发高清首帧 (静止清晰)
+  await startLiveScreencast(vw, vh);
+  await captureAndSend(); // sharp 首帧
   broadcast({ type: 'status', state: 'ready', viewport: { width: vw, height: vh }, resolution: { width: vw * SCALE, height: vh * SCALE }, contentWidth });
   LOG('opened:', target, 'contentWidth:', contentWidth);
 }
 
+// 实时通道: Page.startScreencast 按 CSS 视口分辨率输出 (无视 DSF), 页面变化即推帧
+async function startLiveScreencast(vw, vh) {
+  if (!page) return;
+  try {
+    cdp = await page.createCDPSession();
+    await cdp.send('Page.enable');
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: vw, maxHeight: vh });
+    cdp.on('Page.screencastFrame', ({ data, sessionId }) => {
+      broadcast({ type: 'frame', data, live: true });
+      cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+    });
+  } catch (e) { LOG('screencast err:', e.message); cdp = null; }
+}
+
+// 高清通道: captureScreenshot 尊重 DSF → 输出 视口×SCALE; 静止时替换实时帧
 async function captureAndSend() {
   if (!page) return;
   try {
     const shot = await page.screenshot({ type: 'jpeg', quality: 85 });
-    broadcast({ type: 'frame', data: shot.toString('base64') });
+    broadcast({ type: 'frame', data: shot.toString('base64'), sharp: true });
   } catch (e) { LOG('capture err:', e.message); }
 }
 
 async function closePage() {
   clearTimeout(screenshotTimer);
+  if (cdp) { try { await cdp.send('Page.stopScreencast'); } catch (e) {} cdp = null; }
   if (page) { try { await page.close(); } catch (e) {} page = null; }
 }
 
 let mousePressed = false; // 按住期间不调度截图, 避免截图与 mouseup 并发干扰坐标派发
-function scheduleShot() { clearTimeout(screenshotTimer); screenshotTimer = setTimeout(captureAndSend, 80); }
+// 静止高清帧防抖 250ms: 实时 screencast 已覆盖交互期, 静止后才取高清帧
+function scheduleShot() { clearTimeout(screenshotTimer); screenshotTimer = setTimeout(captureAndSend, 250); }
 
 async function handleInput(m) {
   if (!page) return;
