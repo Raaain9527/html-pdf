@@ -91,16 +91,21 @@ fn find_project_root() -> std::path::PathBuf {
     // Try to find project root relative to the exe at runtime.
     // This is more robust than CARGO_MANIFEST_DIR (compile-time path).
     if let Ok(exe) = std::env::current_exe() {
-        // exe is in src-tauri/target/release/html-pdf.exe
-        // Go up 3 levels to project root
-        if let Some(root) = exe.parent() // release
-            .and_then(|p| p.parent())    // target
-            .and_then(|p| p.parent())    // src-tauri
-            .and_then(|p| p.parent())    // project root
-        {
-            let script = root.join("html2pdf.js");
-            if script.exists() {
-                return root.to_path_buf();
+        if let Some(exe_dir) = exe.parent() {
+            // 安装版: 捆绑资源与 exe 同目录 (或 exe/resources), html2pdf.js 就在其中
+            for cand in [exe_dir.to_path_buf(), exe_dir.join("resources")] {
+                if cand.join("html2pdf.js").exists() {
+                    return cand;
+                }
+            }
+            // 开发布局: exe 在 src-tauri/target/release, 上溯 4 层到项目根
+            if let Some(root) = exe_dir.parent() // target
+                .and_then(|p| p.parent())        // src-tauri
+                .and_then(|p| p.parent())        // project root
+            {
+                if root.join("html2pdf.js").exists() {
+                    return root.to_path_buf();
+                }
             }
         }
     }
@@ -121,6 +126,12 @@ fn node_exe_path() -> String {
         if bundled.exists() {
             eprintln!("[node] using bundled: {}", bundled.display());
             return bundled.to_string_lossy().to_string();
+        }
+        // 安装版: 资源可能放在 exe/resources 子目录
+        let installed = dir.join("resources").join("nodejs-portable").join("node.exe");
+        if installed.exists() {
+            eprintln!("[node] using installed-resources: {}", installed.display());
+            return installed.to_string_lossy().to_string();
         }
         // Also check relative to project root (for cargo run)
         let project_bundled = dir.join("../../../nodejs-portable/node.exe");

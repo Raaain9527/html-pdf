@@ -1,6 +1,6 @@
 {
   "name": "html-pdf",
-  "version": "1.0.1",
+  "version": "1.3.0",
   "description": "Export HTML to single-page vector PDF with selectable text",
   "bin": {
     "html2pdf": "./html2pdf.js"

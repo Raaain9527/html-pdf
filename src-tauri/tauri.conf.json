@@ -1,6 +1,6 @@
 {
   "productName": "HTML-to-PDF",
-  "version": "1.0.1",
+  "version": "1.3.0",
   "identifier": "com.html-pdf.app",
   "build": {
     "frontendDist": "../ui",
@@ -30,7 +30,12 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../nodejs-portable/node.exe": "nodejs-portable/"
+      "../nodejs-portable/node.exe": "nodejs-portable/node.exe",
+      "../node_modules": "node_modules/",
+      "../html2pdf.js": "html2pdf.js",
+      "../html2pdf-lib.js": "html2pdf-lib.js",
+      "../pdf-postprocess.js": "pdf-postprocess.js",
+      "../preview-daemon.js": "preview-daemon.js"
     },
     "icon": [
       "icons/32x32.png",
