@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>窄页夹具 - 自动适配/断点测试</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f4f5f7; }
+  .page { width: 860px; margin: 24px auto; padding: 30px 42px; background: #fff; }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 28px; }
+  .two-col li { margin: 4px 0; font-size: 13px; }
+  @media (max-width: 920px) {
+    .page { width: 100%; margin: 0; padding: 20px; }
+    .two-col { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <main class="page">
+    <h1>自动适配测试页</h1>
+    <ul class="two-col">
+      <li>列A项1</li>
+      <li>列A项2</li>
+      <li>列B项3</li>
+      <li>列B项4</li>
+    </ul>
+  </main>
+</body>
+</html>
