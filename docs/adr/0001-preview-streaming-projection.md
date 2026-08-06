@@ -1,7 +1,7 @@
 # ADR 0001: 预览改为「流式远程浏览器投影」(CDP screencast)
 
 **日期**：2026-08-05
-**状态**：已决定（grilling 会话确认）
+**状态**：已实现（2026-08-06 Phase 2 落地）
 
 ## 上下文
 
@@ -55,5 +55,13 @@
 ## 关联
 
 - 视口高度硬编码：`html2pdf-lib.js:77`
-- 现预览 iframe 高度缺陷：`ui/index.html:307-313`
 - 术语：见 `docs/glossary.md`（投影映射、渲染坍塌、视口高度、交互模式）
+
+## 实现记录（2026-08-06）
+
+- **daemon**：`preview-daemon.js`（项目根）——WebSocket 服务器(127.0.0.1:0)，stdout 首行 `LISTENING <port>`；持有 warm Puppeteer，CDP `Page.startScreencast` 推送 JPEG 帧；`open`/`input`/`capture`/`shutdown` 消息协议
+- **Rust**：`lib.rs` `start_preview_daemon`/`stop_preview_daemon` 命令 + `DaemonState`（懒加载、退出清理）；删除了旧的 `start_preview_server` 死代码
+- **前端**：`ui/index.html` 预览区 iframe → canvas（接收帧流）；滚轮/鼠标/键盘输入转发（交互始终可用，移除"交互模式"开关）；导出经 daemon `capture` 取真实 DOM；`关闭 Node` 按钮（懒加载 + 可关闭）
+- **缩放**：fit 适配 + 1:1 + Ctrl+滚轮图像缩放（ADR 0002）
+- **依赖**：`package.json` 新增 `ws`
+- **测试**：`samples/_test-daemon.js`（流式核心）、`samples/_test-breakfit.js`（自动适配断点感知）

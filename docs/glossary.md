@@ -22,10 +22,9 @@ PDF 页面的物理尺寸。宽度留空时 = 内容容器宽度（`wrapperW` �
 1. **视口高度不一致**：预览 iframe 曾设 `height:auto`（Chrome 默认 150px），导出视口高 900px——`vh` 在预览按 1.5px 解析、导出按 9px 解析，`vh`/百分比/flex 高度布局坍塌。
 2. **视口宽度被 flex 收缩**（主要根因）：`.preview-frame` 是 `.preview-frame-wrap`（`display:flex`）的 flex 子项，默认 `flex-shrink:1`。**窗口化时面板比设定视口（如 1680px）窄，iframe 被压缩到面板宽**（实测 812px），"浏览器视口"被悄悄改小——若低过页面自身的响应式断点（如简历的 `@media (max-width:920px)`），布局按断点重排，表现为"全屏正常、窗口化坍塌"。视觉与实测双重确认（截图 + getBoundingClientRect）。
 
-修复状态（2026-08-05，Phase 1）：
-- 高度：`ui/index.html` `updatePreviewScale()` 把 iframe 高度固定 900px（对齐 `html2pdf-lib.js:77`）
-- 宽度：`.preview-frame` 加 `flex-shrink:0`，保持设定视口宽，面板横向滚动
-- 副作用：内容超视口时需在 iframe 内部/面板滚动；终极方案见 ADR 0001（流式投影）
+修复状态：
+- **Phase 1（2026-08-05，过渡）**：iframe 高度固定 900px + `flex-shrink:0`（临时缓解）
+- **Phase 2（2026-08-06，根治）**：预览改为流式投影（ADR 0001 已实现）——daemon 用真实 Chrome 渲染，前端 canvas 显示帧流，视口由 daemon 直接设定（1680×900），不再有 iframe 视口宽度/高度被压缩的问题
 
 ## 所见即所得 (WYSIWYG)
 预览与导出一致。本工具的特殊性：导出是单页 `1680×30000`，任何预览界面都装不下整张，因此"所见"被限定为 **固定视口窗口内的真实渲染**，靠滚动浏览。超出该定义范围的"完全一致"不作承诺。
