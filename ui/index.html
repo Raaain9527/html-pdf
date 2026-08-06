@@ -99,16 +99,17 @@ body {
 .status.success { background: #f0fdf4; color: #166534; }
 .status.error { background: #fef2f2; color: #991b1b; }
 
-/* Right panel — preview */
+/* Right panel — preview (流式投影, ADR 0001/0002) */
 .preview-toolbar { height: 36px; background: #fff; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; gap: 12px; font-size: 11px; color: var(--text-secondary); }
-.interaction-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
-.interaction-toggle input { cursor: pointer; }
-.preview-scale-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-left: auto; }
-.preview-frame-wrap { flex: 1; overflow: auto; display: flex; justify-content: flex-start; align-items: flex-start; padding: 12px; }
-/* flex-shrink:0 关键 — 否则面板比视口窄时 iframe 被压缩, "浏览器视口"悄悄变小,
-   触发页面自身的响应式断点(如 @media max-width:920px)导致布局坍塌。须保持设定视口宽, 面板横向滚动。 */
-.preview-frame { flex-shrink: 0; border: none; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15); transform-origin: top center; }
-.interaction-active { outline: 2px solid var(--warning); outline-offset: 2px; }
+.daemon-status { font-size: 11px; }
+.daemon-status.loading { color: var(--warning); }
+.daemon-status.ok { color: var(--success); }
+.daemon-status.error { color: var(--danger); }
+.zoom-controls { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.preview-scale-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.preview-frame-wrap { flex: 1; overflow: auto; display: flex; justify-content: flex-start; align-items: flex-start; padding: 12px; background: #e2e8f0; }
+/* canvas 显示后台投射帧; flex-shrink:0 保持视口不被面板压缩, 显示大小由 fit/缩放控制 */
+.preview-canvas { flex-shrink: 0; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15); cursor: crosshair; outline: none; }
 
 /* Footer */
 .footer { font-size: 10px; color: var(--text-muted); text-align: center; }
@@ -211,17 +212,19 @@ body {
 
   <div class="divider" id="divider"></div>
 
-  <!-- Right Panel - Preview -->
+  <!-- Right Panel - Preview (流式投影: canvas 显示 daemon 投射帧) -->
   <div class="panel-right">
     <div class="preview-toolbar">
-      <label class="interaction-toggle">
-        <input type="checkbox" id="interactionMode"><span>交互模式</span>
-      </label>
-      <span style="font-size:11px;color:var(--text-muted);">开启后可点击页面元素</span>
-      <span class="preview-scale-label" id="previewScale">1680×900px</span>
+      <span class="daemon-status" id="daemonStatus">预览服务：未启动</span>
+      <button class="btn btn-sm btn-secondary" id="stopDaemon" disabled>关闭 Node</button>
+      <div class="zoom-controls">
+        <button class="btn btn-sm" id="zoomFit" title="适配面板宽度">适配</button>
+        <button class="btn btn-sm" id="zoom100" title="1:1 显示">1:1</button>
+        <span class="preview-scale-label" id="previewScale">1680×900px</span>
+      </div>
     </div>
     <div class="preview-frame-wrap" id="previewWrap">
-      <iframe class="preview-frame" id="previewFrame"></iframe>
+      <canvas id="previewCanvas" class="preview-canvas" tabindex="0"></canvas>
     </div>
   </div>
 </div>
@@ -233,8 +236,6 @@ const $$ = s => document.querySelectorAll(s);
 // --- State ---
 let selectedFile = null;
 let previewDebounce = null;
-let interactionMode = false;
-let detectedViewport = null;  // one-time detection per file
 
 // --- Divider drag ---
 const divider = $('#divider');
@@ -245,102 +246,183 @@ document.addEventListener('mousemove', e => {
   if (!dragging) return;
   const w = Math.max(320, Math.min(600, e.clientX));
   leftPanel.style.width = w + 'px';
-  updatePreviewScale();
+  updateCanvasScale();
 });
 document.addEventListener('mouseup', () => { dragging = false; divider.classList.remove('dragging'); });
 
-// --- Preview ---
-async function loadPreview(input, firstLoad) {
-  if (!input) { $('#previewFrame').src = 'about:blank'; return; }
+// --- Preview (流式投影, ADR 0001/0002) ---
+let daemonUrl = null;
+let previewWs = null;
+let canvas = $('#previewCanvas');
+let ctx = canvas.getContext('2d');
+let currentViewport = { width: 1680, height: 900 };
+let zoomMode = 'fit';      // fit | 100 | zoom
+let zoomLevel = 1;
+let lastMoveAt = 0;
+let captureResolve = null;
+let frameImg = new Image();
+let viewportTouched = false; // 用户手动改过视口宽 → 不再自动适配
+let autoFitFile = null;      // 已自动适配过的文件, 防循环
+let fitPending = null;       // 断点感知自动适配的探测状态 {probe, target}
 
-  if (/^https?:\/\//i.test(input)) {
-    $('#previewFrame').src = input;
-    $('#interactionMode').disabled = true;
-  } else {
-    $('#interactionMode').disabled = false;
-    try {
-      const dir = input.replace(/[^\\/]+$/, '');
-      let html = await window.__TAURI__.core.invoke('read_file', { path: input });
-      const vw = parseInt($('#viewportWidth').value) || 1680;
-      // Inject explicit pixel width — blob URL null-origin ignores device-width
-      html = html.replace(/(<head[^>]*>)/i, `$1\n<meta name="viewport" content="width=${vw}, initial-scale=1">`);
+function setDaemonStatus(text, cls) {
+  const el = $('#daemonStatus');
+  el.textContent = text;
+  el.className = 'daemon-status ' + (cls || '');
+}
 
-      // Embed relative images as base64 (blob URLs lose directory context)
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      const imgs = doc.querySelectorAll('img[src]');
-      for (const img of imgs) {
-        const src = img.getAttribute('src');
-        if (!src || /^https?:\/\//i.test(src) || /^data:/i.test(src)) continue;
-        const fullPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : dir + src.replace(/\//g, '\\');
-        try {
-          const b64 = await window.__TAURI__.core.invoke('read_file_base64', { path: fullPath });
-          const ext = (src.split('.').pop() || 'png').toLowerCase();
-          const mime = { jpg:'jpeg',jpeg:'jpeg',png:'png',gif:'gif',webp:'webp',svg:'svg+xml',bmp:'bmp' }[ext]||'png';
-          const escaped = src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          html = html.replace(new RegExp(`src=["']${escaped}["']`, 'g'),
-            `src="data:image/${mime};base64,${b64}"`);
-        } catch(e) {}
-      }
+function sendToDaemon(obj) {
+  if (previewWs && previewWs.readyState === WebSocket.OPEN) previewWs.send(JSON.stringify(obj));
+}
 
-      // Convert relative CSS url() to absolute
-      html = html.replace(/url\(["']?(?!https?:\/\/|data:|file:\/\/|#|[a-zA-Z]:)([^"')]+)["']?\)/gi,
-        (_, url) => `url("file:///${dir.replace(/\\/g, '/')}${url}")`);
+function drawFrame(b64) {
+  frameImg.onload = () => ctx.drawImage(frameImg, 0, 0);
+  frameImg.src = 'data:image/jpeg;base64,' + b64;
+}
 
-      if (firstLoad) {
-        const w = detectContentWidth(html);
-        if (w) { detectedViewport = w; $('#viewportHint').textContent = `(检测: ${w}px)`; }
-      }
-
-      $('#previewFrame').srcdoc = html;
-    } catch(e) { console.error(e); }
+async function ensureDaemon() {
+  if (previewWs && previewWs.readyState === WebSocket.OPEN) return true;
+  setDaemonStatus('启动预览服务...', 'loading');
+  try {
+    daemonUrl = await window.__TAURI__.core.invoke('start_preview_daemon');
+  } catch (e) {
+    setDaemonStatus('启动失败: ' + e, 'error');
+    return false;
   }
-  updatePreviewScale();
+  return new Promise((resolve) => {
+    previewWs = new WebSocket(daemonUrl);
+    previewWs.onopen = () => { setDaemonStatus('运行中', 'ok'); $('#stopDaemon').disabled = false; resolve(true); };
+    previewWs.onerror = () => { setDaemonStatus('连接失败', 'error'); resolve(false); };
+    previewWs.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'frame') drawFrame(m.data);
+      else if (m.type === 'status') {
+        if (m.state === 'error') setDaemonStatus('渲染错误: ' + (m.message || ''), 'error');
+        else if (m.state === 'ready') {
+          if (m.contentWidth) $('#viewportHint').textContent = `(内容宽 ${m.contentWidth}px)`;
+          handleAutoFit(m);
+        }
+      }
+      else if (m.type === 'capture-result') { if (captureResolve) { captureResolve(m.html); captureResolve = null; } }
+    };
+  });
 }
 
-function detectContentWidth(html) {
-  const bodyMatch = html.match(/body\s*\{[^}]*max-width\s*:\s*(\d+)px/i);
-  if (bodyMatch) return parseInt(bodyMatch[1]);
-  const pageMatch = html.match(/\.page\s*\{[^}]*width\s*:\s*(\d+)px/i);
-  if (pageMatch) return parseInt(pageMatch[1]);
-  return null;
-}
-
-function updatePreviewScale() {
-  const frame = $('#previewFrame');
+async function loadPreview(input) {
+  if (!input) return;
+  if (!await ensureDaemon()) return;
   const vw = parseInt($('#viewportWidth').value) || 1680;
-  // 预览 iframe 高度必须等于导出视口高度 (html2pdf-lib.js:77 硬编码 900),
-  // 否则 vh / 百分比高度布局按 150px(默认) 解析 → 与导出(900)不一致 → 渲染坍塌。
-  // 副作用: 内容超过 900px 时在 iframe 内部滚动 (Phase 2 流式投影将取代此方案)。
-  const vh = 900;
-  frame.style.width = vw + 'px';
-  frame.style.height = vh + 'px';
+  const vh = 900; // 与导出视口高一致 (html2pdf-lib.js:77)
+  currentViewport = { width: vw, height: vh };
+  canvas.width = vw; canvas.height = vh; // 绘制缓冲 = 视口尺寸
   $('#previewScale').textContent = vw + '×' + vh + 'px';
+  sendToDaemon({ type: 'open', url: /^https?:\/\//i.test(input) ? input : undefined, path: /^https?:\/\//i.test(input) ? undefined : input, viewportWidth: vw, viewportHeight: vh });
+  updateCanvasScale();
+}
+
+function updateCanvasScale() {
+  const { width: vw, height: vh } = currentViewport;
+  let dispW, dispH;
+  if (zoomMode === 'fit') {
+    const wrapW = $('#previewWrap').clientWidth - 24; // padding 12*2
+    const s = Math.max(0.05, Math.min(1, wrapW / vw));
+    dispW = Math.round(vw * s); dispH = Math.round(vh * s);
+  } else if (zoomMode === '100') {
+    dispW = vw; dispH = vh;
+  } else { // zoom
+    dispW = Math.round(vw * zoomLevel); dispH = Math.round(vh * zoomLevel);
+  }
+  canvas.style.width = dispW + 'px';
+  canvas.style.height = dispH + 'px';
 }
 
 function refreshPreview() {
   clearTimeout(previewDebounce);
-  previewDebounce = setTimeout(() => {
-    if (selectedFile && !/^https?:\/\//i.test(selectedFile)) loadPreview(selectedFile, false);
-    updatePreviewScale();
-  }, 300);
+  previewDebounce = setTimeout(() => { if (selectedFile) loadPreview(selectedFile); }, 300);
 }
 
-$('#viewportWidth').addEventListener('input', refreshPreview);
-window.addEventListener('resize', updatePreviewScale);
-
-// --- Interaction mode ---
-$('#interactionMode').addEventListener('change', () => {
-  interactionMode = $('#interactionMode').checked;
-  const frame = $('#previewFrame');
-  if (interactionMode) {
-    frame.style.pointerEvents = 'auto';
-    frame.classList.add('interaction-active');
-  } else {
-    frame.style.pointerEvents = 'none';
-    frame.classList.remove('interaction-active');
+// --- 断点感知自动适配 (ADR 0002 fit) ---
+// 页面远窄于视口 → 视口调到内容宽+边距让页面铺满; 若适配后页面变成全宽(命中页面自身
+// 响应式断点, 如 @media max-width:920px 使两列塌成一列), 抬升视口直到布局稳定。
+function handleAutoFit(m) {
+  if (viewportTouched) return;
+  if (!fitPending) {
+    if (autoFitFile === selectedFile) return;
+    const c = m.contentWidth;
+    if (c && c < currentViewport.width * 0.7) {
+      fitPending = { probe: 0, target: Math.min(Math.max(c + 40, 320), 5120) };
+      applyFit(fitPending.target);
+    }
+    return;
   }
+  // 探测中
+  if (m.contentWidth === 0) {
+    fitPending.probe++;
+    if (fitPending.probe > 8) { finishFit(); return; }
+    fitPending.target += 80;
+    applyFit(fitPending.target);
+  } else {
+    finishFit();
+  }
+}
+function applyFit(v) { $('#viewportWidth').value = v; loadPreview(selectedFile); }
+function finishFit() { autoFitFile = selectedFile; fitPending = null; }
+
+// --- 输入转发 (交互始终可用, 取代原"交互模式"开关) ---
+function canvasToViewport(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: Math.round((e.clientX - rect.left) * (currentViewport.width / rect.width)),
+    y: Math.round((e.clientY - rect.top) * (currentViewport.height / rect.height)),
+  };
+}
+canvas.addEventListener('mousemove', (e) => {
+  const now = Date.now();
+  if (now - lastMoveAt < 33) return; // ~30fps 节流
+  lastMoveAt = now;
+  const p = canvasToViewport(e);
+  sendToDaemon({ type: 'input', kind: 'mousemove', x: p.x, y: p.y });
 });
+canvas.addEventListener('mousedown', (e) => {
+  const p = canvasToViewport(e);
+  const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+  sendToDaemon({ type: 'input', kind: 'mousedown', x: p.x, y: p.y, button });
+  canvas.focus();
+});
+canvas.addEventListener('mouseup', (e) => {
+  const p = canvasToViewport(e);
+  const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+  sendToDaemon({ type: 'input', kind: 'mouseup', x: p.x, y: p.y, button });
+});
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (e.ctrlKey) { // Ctrl+滚轮 = 图像缩放 (ADR 0002)
+    zoomMode = 'zoom';
+    zoomLevel = Math.max(0.2, Math.min(4, zoomLevel * (e.deltaY < 0 ? 1.1 : 0.9)));
+    updateCanvasScale();
+  } else { // 普通滚轮 = 页面滚动, 转发给 daemon
+    sendToDaemon({ type: 'input', kind: 'wheel', deltaX: e.deltaX, deltaY: e.deltaY });
+  }
+}, { passive: false });
+canvas.addEventListener('keydown', (e) => {
+  if (e.key.length === 1) { e.preventDefault(); sendToDaemon({ type: 'input', kind: 'type', key: e.key }); }
+});
+
+// --- 缩放控制 (fit 默认 + 图像缩放) ---
+$('#zoomFit').addEventListener('click', () => { zoomMode = 'fit'; updateCanvasScale(); });
+$('#zoom100').addEventListener('click', () => { zoomMode = '100'; updateCanvasScale(); });
+
+// --- daemon 生命周期 (懒加载 + 用户可关闭, ADR 0002) ---
+$('#stopDaemon').addEventListener('click', async () => {
+  if (previewWs) { previewWs.close(); previewWs = null; }
+  try { await window.__TAURI__.core.invoke('stop_preview_daemon'); } catch (e) {}
+  daemonUrl = null;
+  $('#stopDaemon').disabled = true;
+  setDaemonStatus('已关闭');
+});
+
+$('#viewportWidth').addEventListener('input', () => { viewportTouched = true; refreshPreview(); });
+window.addEventListener('resize', updateCanvasScale);
 
 // --- Advanced toggle ---
 $('#advancedToggle').addEventListener('click', () => {
@@ -361,8 +443,9 @@ $$('.tab').forEach(tab => tab.addEventListener('click', () => {
 
 // --- File selection ---
 const dropZone = $('#dropZone');
+function resetFitState() { fitPending = null; autoFitFile = null; }
 dropZone.addEventListener('click', async () => {
-  try { selectedFile = await window.__TAURI__.core.invoke('pick_file'); updateExportState(); detectedViewport = null; $('#viewportHint').textContent = ''; loadPreview(selectedFile, true); } catch(e){}
+  try { selectedFile = await window.__TAURI__.core.invoke('pick_file'); updateExportState(); resetFitState(); loadPreview(selectedFile); } catch(e){}
 });
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
@@ -370,7 +453,7 @@ dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.
 
 if (window.__TAURI__?.event) {
   window.__TAURI__.event.listen('file-dropped', e => {
-    selectedFile = e.payload; updateExportState(); detectedViewport = null; $('#viewportHint').textContent = ''; loadPreview(selectedFile, true);
+    selectedFile = e.payload; updateExportState(); resetFitState(); loadPreview(selectedFile);
   });
 }
 
@@ -382,6 +465,7 @@ $('#urlFetch').addEventListener('click', () => {
   selectedFile = url;
   $('#urlStatus').textContent = '✓ ' + url;
   updateExportState();
+  resetFitState();
   loadPreview(url);
 });
 $('#urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#urlFetch').click(); });
@@ -421,6 +505,15 @@ function updateExportState() {
   $('#exportBtn').disabled = !selectedFile;
 }
 
+function captureFromDaemon() {
+  return new Promise((resolve, reject) => {
+    if (!previewWs || previewWs.readyState !== WebSocket.OPEN) return reject(new Error('预览服务未连接'));
+    const t = setTimeout(() => reject(new Error('capture 超时')), 8000);
+    captureResolve = (html) => { clearTimeout(t); resolve(html); };
+    sendToDaemon({ type: 'capture' });
+  });
+}
+
 // --- Export ---
 $('#exportBtn').addEventListener('click', async () => {
   if ($('#tab-url').style.display !== 'none') {
@@ -434,13 +527,14 @@ $('#exportBtn').addEventListener('click', async () => {
 
   try {
     let exportInput = selectedFile;
-    if (interactionMode && selectedFile && !/^https?:\/\//i.test(selectedFile)) {
+    // 文件输入: 从 daemon 捕获当前 DOM(含交互状态)保证所见即所得; 预览不可用时回退原文件
+    if (!/^https?:\/\//i.test(selectedFile)) {
       try {
-        const frame = $('#previewFrame');
-        const doc = frame.contentDocument || frame.contentWindow.document;
-        const captured = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
-        exportInput = await window.__TAURI__.core.invoke('write_temp_html', { originalPath: selectedFile, html: captured });
-      } catch(e) { showStatus('DOM 捕获失败: '+e, 'error'); return; }
+        if (previewWs && previewWs.readyState === WebSocket.OPEN) {
+          const captured = await captureFromDaemon();
+          if (captured) exportInput = await window.__TAURI__.core.invoke('write_temp_html', { originalPath: selectedFile, html: captured });
+        }
+      } catch(e) { /* 预览不可用 → 直接用原文件导出 */ }
     }
 
     const opts = collectOptions();

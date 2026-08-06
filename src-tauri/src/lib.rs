@@ -1,102 +1,79 @@
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::io::{BufRead, BufReader};
 use tauri::{Manager, Emitter};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
+// 预览 daemon 生命周期状态（ADR 0001/0002: 懒加载 + 常驻 + 用户可关闭）
+struct DaemonState {
+    child: Mutex<Option<Child>>,
+    url: Mutex<Option<String>>,
+}
+
 #[tauri::command]
-fn start_preview_server(path: String) -> Result<String, String> {
-    use std::io::{BufRead, BufReader, Read};
-    use std::net::TcpListener;
+fn start_preview_daemon(app: tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<DaemonState>();
 
-    let file_path = std::path::Path::new(&path);
-    let serve_dir = file_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-    let file_name = file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-    let file_name_clone = file_name.clone();
-
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("启动服务器失败: {}", e))?;
-    let port = listener.local_addr().map_err(|e| format!("获取端口失败: {}", e))?.port();
-
-    std::thread::spawn(move || {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        eprintln!("[preview] server started on port {}", port);
-        for stream in listener.incoming().flatten() {
-            eprintln!("[preview] connection received");
-            let mut reader = BufReader::new(&stream);
-            let mut req_line = String::new();
-            if reader.read_line(&mut req_line).is_err() { continue; }
-
-            let req_path = req_line.split_whitespace().nth(1).unwrap_or("/");
-            let req_path = percent_decode(req_path);
-            let req_path = req_path.trim_start_matches('/');
-            eprintln!("[preview] request: {}", req_path);
-
-            let full_path = if req_path.is_empty() { serve_dir.join(&file_name_clone) } else { serve_dir.join(req_path) };
-            eprintln!("[preview] serve: {}", full_path.display());
-
-            let content_type = mime_type(&full_path);
-            let mut response = String::new();
-
-            if let Ok(mut file) = std::fs::File::open(&full_path) {
-                let mut buf = Vec::new();
-                if file.read_to_end(&mut buf).is_ok() {
-                    let mut body = String::from_utf8_lossy(&buf).to_string();
-                    if content_type.contains("text/html") {
-                        let script = format!(
-                            r#"<script>(()=>{{let vp=document.querySelector('meta[name=viewport]');window.addEventListener('message',e=>{{if(e.data&&e.data.viewportWidth&&vp)vp.content='width='+e.data.viewportWidth+',initial-scale=1}});window.parent.postMessage({{previewReady:true}},'*');}})()</script>"#
-                        );
-                        body = body.replace("</head>", &format!("{}\n</head>", script));
-                    }
-                    response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
-                        content_type, body.len(), body
-                    );
-                }
-            } else {
-                response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string();
+    // 已在运行 → 返回已有 URL
+    {
+        let mut guard = state.child.lock().unwrap();
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().map_err(|e| e.to_string())?.is_none() {
+                return Ok(state.url.lock().unwrap().clone().unwrap_or_default());
             }
-
-            use std::io::Write;
-            let _ = (&stream).write_all(response.as_bytes());
         }
-        }));
+    }
+
+    // spawn preview-daemon.js, 读 stdout 首行 "LISTENING <port>"
+    let project_root = find_project_root();
+    let script = project_root.join("preview-daemon.js");
+    let mut cmd = hidden_cmd(&node_exe_path());
+    cmd.current_dir(&project_root)
+        .arg(&script)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    let mut child = cmd.spawn().map_err(|e| format!("启动预览服务失败: {}", e))?;
+    let stdout = child.stdout.take().ok_or("无法读取预览服务输出")?;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        if BufReader::new(stdout).read_line(&mut line).is_ok() {
+            let _ = tx.send(line);
+        }
     });
 
-    let url = format!("http://127.0.0.1:{}/{}", port, file_name);
-    eprintln!("[preview] serving: {}", url);
+    let line = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .map_err(|_| {
+            let _ = child.kill();
+            "预览服务启动超时".to_string()
+        })?;
+    let port: u16 = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|p| p.parse().ok())
+        .ok_or_else(|| {
+            let _ = child.kill();
+            "预览服务端口解析失败".to_string()
+        })?;
+
+    let url = format!("ws://127.0.0.1:{}", port);
+    *state.child.lock().unwrap() = Some(child);
+    *state.url.lock().unwrap() = Some(url.clone());
     Ok(url)
 }
 
-fn percent_decode(s: &str) -> String {
-    let mut result = String::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex) = u8::from_str_radix(&s[i+1..i+3], 16) {
-                result.push(hex as char);
-                i += 3;
-                continue;
-            }
-        }
-        result.push(bytes[i] as char);
-        i += 1;
+#[tauri::command]
+fn stop_preview_daemon(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<DaemonState>();
+    if let Some(mut child) = state.child.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    result
-}
-
-fn mime_type(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("html") | Some("htm") => "text/html; charset=utf-8",
-        Some("css") => "text/css",
-        Some("js") => "application/javascript",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("svg") => "image/svg+xml",
-        Some("woff") => "font/woff",
-        Some("woff2") => "font/woff2",
-        Some("ttf") => "application/font-ttf",
-        _ => "application/octet-stream",
-    }
+    *state.url.lock().unwrap() = None;
+    Ok(())
 }
 
 // Hide console window on Windows
@@ -332,6 +309,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            app.manage(DaemonState { child: Mutex::new(None), url: Mutex::new(None) });
+
             // Check Node.js is available
             let has_node = hidden_cmd(&node_exe_path()).arg("--version").output()
                 .map(|o| o.status.success()).unwrap_or(false);
@@ -355,7 +334,15 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_file, read_file_base64, start_preview_server, write_temp_html, check_node, pick_file, pick_files, export_pdf])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(tauri::generate_handler![read_file, read_file_base64, start_preview_daemon, stop_preview_daemon, write_temp_html, check_node, pick_file, pick_files, export_pdf])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // 应用退出时清理预览 daemon 子进程
+            if let tauri::RunEvent::Exit = event {
+                if let Some(mut child) = app_handle.state::<DaemonState>().child.lock().unwrap().take() {
+                    let _ = child.kill();
+                }
+            }
+        });
 }
