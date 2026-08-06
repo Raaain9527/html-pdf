@@ -39,7 +39,14 @@ PDF 页面的物理尺寸。宽度留空时 = 内容容器宽度（`wrapperW` �
 预览中可点击/填写页面元素，交互后的 **DOM 状态会被捕获进导出的 PDF**。现有 srcdoc 实现靠 `pointerEvents` + `outerHTML` 抓取（`ui/index.html:326-337, 431-437`）；投影方案下交互直接作用于真实 DOM，捕获更干净。
 
 ## CDP screencast
-Chrome DevTools Protocol 的 `Page.startScreencast`：把页面视口编码为 JPEG 帧流推给客户端。远程浏览器投影（方案 B）的传输机制。
+Chrome DevTools Protocol 的 `Page.startScreencast`：把页面视口编码为 JPEG 帧流推给客户端。远程浏览器投影（方案 B）的传输机制。注意：**screencast 只按 CSS 视口分辨率输出（无视 deviceScaleFactor）**，因此无法用它获得高清帧；高清须用 `page.screenshot()`。
+
+## 双通道混合投影（ADR 0003）
+预览同时维护两套帧源，解决"清晰 vs 流畅"的矛盾：
+- **实时通道**：`Page.startScreencast` 按 CSS 视口分辨率（如 980×900）推帧，~15-30fps，滚动/拖拽期间提供流畅反馈
+- **高清通道**：`page.screenshot()` at DSF2 输出 视口×2（如 1960×1800），交互静止 ~250ms 后替换实时帧（"渐进清晰"）
+- 前端 **高清优先**：近期显示过高清帧则忽略迟到的 live 帧（避免软帧覆盖），新交互后恢复
+- 验证：滚动收到多张 live 帧、静止收到 sharp 帧、点击无选中（screencast 不干扰鼠标派发）
 
 ## 常驻 daemon
 为预览长期运行的 Node 进程（持有 warm Puppeteer），区别于现有"每次导出 `spawn` 一次 `node html2pdf.js`"的即用即弃模型（`src-tauri/src/lib.rs:234-276`）。
