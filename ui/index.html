@@ -299,6 +299,8 @@ async function ensureDaemon() {
       else if (m.type === 'status') {
         if (m.state === 'error') setDaemonStatus('渲染错误: ' + (m.message || ''), 'error');
         else if (m.state === 'ready') {
+          // 绘制缓冲 = daemon 栅格分辨率 (视口×SCALE, 如 3360×1800), 提升清晰度
+          if (m.resolution) { canvas.width = m.resolution.width; canvas.height = m.resolution.height; }
           if (m.contentWidth) $('#viewportHint').textContent = `(内容宽 ${m.contentWidth}px)`;
           handleAutoFit(m);
         }
@@ -314,7 +316,6 @@ async function loadPreview(input) {
   const vw = parseInt($('#viewportWidth').value) || 1680;
   const vh = 900; // 与导出视口高一致 (html2pdf-lib.js:77)
   currentViewport = { width: vw, height: vh };
-  canvas.width = vw; canvas.height = vh; // 绘制缓冲 = 视口尺寸
   $('#previewScale').textContent = vw + '×' + vh + 'px';
   sendToDaemon({ type: 'open', url: /^https?:\/\//i.test(input) ? input : undefined, path: /^https?:\/\//i.test(input) ? undefined : input, viewportWidth: vw, viewportHeight: vh });
   updateCanvasScale();
@@ -376,21 +377,29 @@ function canvasToViewport(e) {
     y: Math.round((e.clientY - rect.top) * (currentViewport.height / rect.height)),
   };
 }
+let mousePressed = false;
+let downViewportPoint = null; // 按下时的视口坐标, 用于点击容差
 canvas.addEventListener('mousemove', (e) => {
   const now = Date.now();
   if (now - lastMoveAt < 33) return; // ~30fps 节流
-  lastMoveAt = now;
   const p = canvasToViewport(e);
+  // 按住期间抑制 <6px 的微小移动, 防止手抖把单击变拖选一大片文字; >6px 才转发(真拖动)
+  if (mousePressed && downViewportPoint && Math.hypot(p.x - downViewportPoint.x, p.y - downViewportPoint.y) < 6) return;
+  lastMoveAt = now;
   sendToDaemon({ type: 'input', kind: 'mousemove', x: p.x, y: p.y });
 });
 canvas.addEventListener('mousedown', (e) => {
   const p = canvasToViewport(e);
+  mousePressed = true;
+  downViewportPoint = p;
   const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
   sendToDaemon({ type: 'input', kind: 'mousedown', x: p.x, y: p.y, button });
   canvas.focus();
 });
 canvas.addEventListener('mouseup', (e) => {
   const p = canvasToViewport(e);
+  mousePressed = false;
+  downViewportPoint = null;
   const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
   sendToDaemon({ type: 'input', kind: 'mouseup', x: p.x, y: p.y, button });
 });

@@ -3,7 +3,9 @@
  * Phase 2 预览 daemon — 流式投影核心（ADR 0001 / 0002）
  *
  * Rust spawn 本进程；stdout 首行打印 "LISTENING <port>"（唯一 stdout 输出，Rust 据此拿端口）。
- * 持有 warm Puppeteer，用 CDP Page.startScreencast 把页面视口编码为 JPEG 帧，经 WebSocket 推给前端；
+ * 持有 warm Puppeteer，把页面视口渲染为高分辨率 JPEG（captureScreenshot 尊重 DSF，
+ * 输出 视口×SCALE 像素；而 screencast 流只按 CSS 视口输出，无法提分辨率），
+ * 在 open/交互滚动后防抖截图，经 WebSocket 推给前端；
  * 前端把鼠标/滚轮/键盘事件发回来驱动真实 DOM；导出时前端发 capture 取当前 DOM。
  *
  * WS 消息协议：
@@ -24,7 +26,11 @@ const LOG = (...a) => console.error('[daemon]', ...a);
 
 let browser = null;
 let page = null;
-let cdp = null;
+let screenshotTimer = null;
+
+// 投影栅格分辨率倍率：DSF 不影响布局/媒体查询/vh(都用 CSS px)，只影响栅格清晰度。
+// 导出是矢量 PDF，DSF 无关；预览布局与导出仍一致。
+const SCALE = 2;
 
 async function getBrowser() {
   if (browser && browser.connected) return browser;
@@ -46,7 +52,7 @@ async function openPage(msg) {
 
   const b = await getBrowser();
   page = await b.newPage();
-  await page.setViewport({ width: vw, height: vh, deviceScaleFactor: 1 });
+  await page.setViewport({ width: vw, height: vh, deviceScaleFactor: SCALE });
 
   const target = msg.url || ('file:///' + msg.path.replace(/\\/g, '/').replace(/^\/+/, ''));
   await page.goto(target, { waitUntil: 'networkidle0', timeout: 60000 });
@@ -71,35 +77,51 @@ async function openPage(msg) {
     }, vw);
   } catch (e) {}
 
-  // 流式帧：CDP Page.startScreencast，每帧必须 ack 否则暂停
-  cdp = await page.createCDPSession();
-  await cdp.send('Page.enable');
-  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: vw, maxHeight: vh });
-  cdp.on('Page.screencastFrame', ({ data, sessionId }) => {
-    broadcast({ type: 'frame', data });
-    cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
-  });
-
-  broadcast({ type: 'status', state: 'ready', viewport: { width: vw, height: vh }, contentWidth });
+  // 首帧 + ready。captureScreenshot 尊重 DSF → 输出 视口×SCALE 高分辨率帧。
+  await captureAndSend();
+  broadcast({ type: 'status', state: 'ready', viewport: { width: vw, height: vh }, resolution: { width: vw * SCALE, height: vh * SCALE }, contentWidth });
   LOG('opened:', target, 'contentWidth:', contentWidth);
 }
 
+async function captureAndSend() {
+  if (!page) return;
+  try {
+    const shot = await page.screenshot({ type: 'jpeg', quality: 85 });
+    broadcast({ type: 'frame', data: shot.toString('base64') });
+  } catch (e) { LOG('capture err:', e.message); }
+}
+
 async function closePage() {
-  if (cdp) { try { await cdp.send('Page.stopScreencast'); } catch (e) {} cdp = null; }
+  clearTimeout(screenshotTimer);
   if (page) { try { await page.close(); } catch (e) {} page = null; }
 }
+
+let mousePressed = false; // 按住期间不调度截图, 避免截图与 mouseup 并发干扰坐标派发
+function scheduleShot() { clearTimeout(screenshotTimer); screenshotTimer = setTimeout(captureAndSend, 80); }
 
 async function handleInput(m) {
   if (!page) return;
   try {
     switch (m.kind) {
-      case 'mousemove': await page.mouse.move(m.x, m.y); break;
-      case 'mousedown': await page.mouse.down({ button: m.button || 'left' }); break;
-      case 'mouseup': await page.mouse.up({ button: m.button || 'left' }); break;
-      case 'wheel': await page.mouse.wheel({ deltaX: m.deltaX || 0, deltaY: m.deltaY || 0 }); break;
+      // down/up 必须先 move 到目标坐标, 否则在旧位置按下 → 点击落点错误/误触发大范围拖选
+      case 'mousemove':
+        await page.mouse.move(m.x, m.y);
+        if (!mousePressed) scheduleShot(); // hover 反馈; 拖动中不截, 松开时由 mouseup 截
+        break;
+      case 'mousedown':
+        mousePressed = true;
+        clearTimeout(screenshotTimer); // 取消待执行截图, 防止与 mouseup 并发
+        await page.mouse.move(m.x, m.y); await page.mouse.down({ button: m.button || 'left' });
+        break;
+      case 'mouseup':
+        mousePressed = false;
+        await page.mouse.move(m.x, m.y); await page.mouse.up({ button: m.button || 'left' });
+        scheduleShot();
+        break;
+      case 'wheel': await page.mouse.wheel({ deltaX: m.deltaX || 0, deltaY: m.deltaY || 0 }); scheduleShot(); break;
       case 'keydown': await page.keyboard.down(m.key); break;
       case 'keyup': await page.keyboard.up(m.key); break;
-      case 'type': await page.keyboard.type(m.key); break;
+      case 'type': await page.keyboard.type(m.key); scheduleShot(); break;
       default: break;
     }
   } catch (e) { LOG('input err:', e.message); }
